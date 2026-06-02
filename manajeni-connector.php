@@ -1,0 +1,266 @@
+<?php
+/**
+ * Plugin Name: Manajeni Connector
+ * Description: <?php _e('Connecteur entre WordPress et Manajeni avec système de session sécurisé', 'manajeni-connector'); ?>
+ * Version: 0.5.0
+ * Author: Manajeni
+ * Text Domain: manajeni-connector
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Démarrer la bufferisation pour éviter les problèmes de headers
+if (!ob_get_level()) {
+    ob_start();
+}
+
+// Constantes
+define('MANAJENI_CONNECTOR_VERSION', '0.6.1');
+define('MANAJENI_CONNECTOR_PATH', plugin_dir_path(__FILE__));
+define('MANAJENI_CONNECTOR_URL', plugin_dir_url(__FILE__));
+
+// Fonction de redirection sécurisée
+function manajeni_safe_redirect($url) {
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    
+    if (!headers_sent()) {
+        wp_redirect($url);
+        exit;
+    } else {
+        ?>
+        <script>window.location.href = "<?php echo esc_url($url); ?>";</script>
+        <noscript><meta http-equiv="refresh" content="0;url=<?php echo esc_url($url); ?>"></noscript>
+        <?php
+        exit;
+    }
+}
+
+// Chargement automatique des classes
+spl_autoload_register(function($class) {
+    $prefix = 'Manajeni_';
+    if (strpos($class, $prefix) !== 0) return;
+    
+    $class_name = str_replace($prefix, '', $class);
+    $class_name = strtolower(str_replace('_', '-', $class_name));
+    
+    $files = [
+        MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-' . $class_name . '.php',
+        MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-' . $class_name . '.php',
+        MANAJENI_CONNECTOR_PATH . 'includes/controllers/class-manajeni-' . $class_name . '.php',
+    ];
+    
+    foreach ($files as $file) {
+        if (file_exists($file)) {
+            require_once $file;
+            return;
+        }
+    }
+});
+
+// Fonction de log globale
+function manajeni_connector_add_log($action, $status, $details = '') {
+    $logs = get_option('manajeni_connector_logs', []);
+    array_unshift($logs, [
+        'date' => current_time('Y-m-d H:i:s'),
+        'action' => $action,
+        'status' => $status,
+        'details' => $details
+    ]);
+    update_option('manajeni_connector_logs', array_slice($logs, 0, 100));
+}
+
+// WP-Cron - Synchronisation automatique
+register_activation_hook(__FILE__, function() {
+    require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-activator.php';
+    Manajeni_Activator::activate();
+    
+    if (!wp_next_scheduled('manajeni_hourly_sync')) {
+        wp_schedule_event(time(), 'hourly', 'manajeni_hourly_sync');
+    }
+});
+
+register_deactivation_hook(__FILE__, function() {
+    wp_clear_scheduled_hook('manajeni_hourly_sync');
+    manajeni_connector_add_log('deactivation', 'success', 'Plugin désactivé');
+});
+
+add_action('manajeni_hourly_sync', function() {
+    if (!class_exists('Manajeni_Fake_API_Client')) {
+        require_once MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-fake-api-client.php';
+    }
+    // Simulation de synchronisation
+    manajeni_connector_add_log('cron_sync', 'success', 'Synchronisation automatique réussie');
+});
+
+// Menu admin
+add_action('admin_menu', function() {
+    // Menu principal
+    add_menu_page(
+        'Manajeni Connector',
+        'Manajeni',
+        'manage_options',
+        'manajeni-dashboard',
+        'manajeni_dashboard_page',
+        'dashicons-cloud',
+        25
+    );
+    
+    // Sous-menus
+    add_submenu_page('manajeni-dashboard', 'Tableau de bord', '📊 Tableau de bord', 'manage_options', 'manajeni-dashboard', 'manajeni_dashboard_page');
+    add_submenu_page('manajeni-dashboard', 'Connexion API', '🔑 Connexion API', 'manage_options', 'manajeni-api-connection', 'manajeni_api_connection_page');
+    add_submenu_page('manajeni-dashboard', 'Test données', '🧪 Test données', 'manage_options', 'manajeni-test-data', 'manajeni_test_data_page');
+    add_submenu_page('manajeni-dashboard', 'Paramètres', '⚙️ Paramètres', 'manage_options', 'manajeni-settings', 'manajeni_settings_page');
+    
+    // Pages sans vérification de session
+    add_submenu_page(null, 'Première connexion', null, 'manage_options', 'manajeni-first-login', 'manajeni_first_login_page');
+    add_submenu_page(null, 'Configuration URL', null, 'manage_options', 'manajeni-url-config', 'manajeni_url_config_page');
+    add_submenu_page(null, 'Déconnexion', null, 'manage_options', 'manajeni-logout', function(){});
+    
+    // AJOUT: Pages des applications dynamiques
+    $apps_list = [
+        'clients', 'devis', 'factures', 'catalogue', 'paiements', 'charges',
+        'projets', 'taches', 'rendez_vous', 'fournisseurs', 'rapports'
+    ];
+    
+    foreach ($apps_list as $app) {
+        add_submenu_page(
+            null, // Caché du menu principal
+            ucfirst($app),
+            ucfirst($app),
+            'manage_options',
+            'manajeni-' . $app,
+            function() use ($app) {
+                if (!class_exists('Manajeni_Session')) {
+                    wp_die('Erreur système');
+                }
+                $session = new Manajeni_Session();
+                if (!$session->check_session()) return;
+                
+                // STRATÉGIE MVC: Vérifier si un contrôleur existe pour cette app
+                // Format: Manajeni_Clients_Controller
+                $controller_class = 'Manajeni_' . ucfirst($app) . '_Controller';
+                if (class_exists($controller_class)) {
+                    $controller = new $controller_class();
+                    $controller->render();
+                    return;
+                }
+                
+                // Fallback: Chargement direct de la vue (pour les modules simples)
+                $file = MANAJENI_CONNECTOR_PATH . 'admin/views/apps/' . $app . '.php';
+                if (file_exists($file)) {
+                    global $apps_handler, $api_client;
+                    $apps_handler = new Manajeni_Apps_Handler();
+                    $api_client = new Manajeni_Fake_API_Client();
+                    include $file;
+                } else {
+                    echo '<div class="wrap"><div class="notice notice-warning"><p>Module "' . esc_html($app) . '" en cours de développement.</p></div></div>';
+                }
+            }
+        );
+    }
+});
+
+// Pages principales
+function manajeni_dashboard_page() {
+    if (!class_exists('Manajeni_Session')) {
+        echo '<div class="error"><p>Classe Manajeni_Session non trouvée</p></div>';
+        return;
+    }
+    $session = new Manajeni_Session();
+    if (!$session->check_session()) return;
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/dashboard.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/dashboard.php';
+    }
+}
+
+function manajeni_test_data_page() {
+    if (!class_exists('Manajeni_Session')) {
+        echo '<div class="error"><p>Classe Manajeni_Session non trouvée</p></div>';
+        return;
+    }
+    $session = new Manajeni_Session();
+    if (!$session->check_session()) return;
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/sync-test.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/sync-test.php';
+    }
+}
+
+function manajeni_settings_page() {
+    if (!class_exists('Manajeni_Session')) {
+        echo '<div class="error"><p>Classe Manajeni_Session non trouvée</p></div>';
+        return;
+    }
+    $session = new Manajeni_Session();
+    if (!$session->check_session()) return;
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/settings.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/settings.php';
+    }
+}
+
+function manajeni_first_login_page() {
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/first-login.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/first-login.php';
+    }
+}
+
+function manajeni_url_config_page() {
+    if (!current_user_can('manage_options')) {
+        wp_die('Accès non autorisé.');
+    }
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/url-config.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/url-config.php';
+    }
+}
+
+function manajeni_api_connection_page() {
+    if (!current_user_can('manage_options')) {
+        wp_die('Accès non autorisé.');
+    }
+    if (file_exists(MANAJENI_CONNECTOR_PATH . 'admin/views/connection.php')) {
+        include_once MANAJENI_CONNECTOR_PATH . 'admin/views/connection.php';
+    }
+}
+
+// Gestion des sessions
+add_action('admin_init', function() {
+    if (isset($_GET['page']) && $_GET['page'] === 'manajeni-logout') {
+        if (class_exists('Manajeni_Session')) {
+            $session = new Manajeni_Session();
+            $session->logout();
+        }
+        manajeni_safe_redirect(admin_url('admin.php?page=manajeni-first-login'));
+        exit;
+    }
+    
+    if (isset($_GET['page']) && strpos($_GET['page'], 'manajeni-') === 0) {
+        $public_pages = ['manajeni-first-login', 'manajeni-url-config', 'manajeni-api-connection'];
+        if (!in_array($_GET['page'], $public_pages)) {
+            if (class_exists('Manajeni_Session')) {
+                $session = new Manajeni_Session();
+                $session->check_session();
+            }
+        }
+    }
+}, 5);
+
+// Styles
+add_action('admin_enqueue_scripts', function($hook) {
+    wp_enqueue_style('manajeni-admin-css', MANAJENI_CONNECTOR_URL . 'admin/assets/css/admin.css', [], MANAJENI_CONNECTOR_VERSION);
+});
+
+add_filter('admin_body_class', function($classes) {
+    if (isset($_GET['page']) && strpos($_GET['page'], 'manajeni') !== false) {
+        $classes .= ' mj-admin-page ';
+    }
+    return $classes;
+});
+
+add_action('shutdown', function() {
+    while (ob_get_level()) {
+        ob_end_flush();
+    }
+});
