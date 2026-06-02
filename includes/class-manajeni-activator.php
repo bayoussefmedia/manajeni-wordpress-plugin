@@ -144,5 +144,13 @@ class Manajeni_Activator {
         if (!get_option('manajeni_api_key_masked')) {
             add_option('manajeni_api_key_masked', '');
         }
+
+        if (!get_option('manajeni_api_secret_masked')) {
+            add_option('manajeni_api_secret_masked', '');
+        }
+
+        if (!get_option('manajeni_api_email')) {
+            add_option('manajeni_api_email', '');
+        }
     }
 }

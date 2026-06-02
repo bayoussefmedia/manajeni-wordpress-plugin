@@ -15,6 +15,8 @@ $xml_handler = new Manajeni_XML_Handler();
 $db = new Manajeni_DB();
 $api_url = get_option('manajeni_url', '');
 $masked_api_key = $db->get_masked_api_key();
+$masked_api_secret = $db->get_masked_api_secret();
+$api_email = $db->get_api_email();
 
 $message = '';
 $message_type = '';
@@ -30,6 +32,7 @@ if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonc
     $options_to_delete = [
         'manajeni_url', 'manajeni_connector_logs', 'manajeni_connected',
         'manajeni_user_session', 'manajeni_api_key_crypted', 'manajeni_api_key_masked',
+        'manajeni_api_secret_crypted', 'manajeni_api_secret_masked', 'manajeni_api_email',
         'manajeni_last_connection', 'manajeni_last_activity'
     ];
     foreach($options_to_delete as $opt) delete_option($opt);
@@ -89,6 +92,14 @@ if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonc
                     <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
                         <span>API Key</span>
                         <strong style="color:var(--mj-slate-900)"><?php echo esc_html($masked_api_key ?: 'Non configuree'); ?></strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
+                        <span>Secret API</span>
+                        <strong style="color:var(--mj-slate-900)"><?php echo esc_html($masked_api_secret ?: 'Non configure'); ?></strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
+                        <span>Email API</span>
+                        <strong style="color:var(--mj-slate-900)"><?php echo esc_html($api_email ?: 'Non configure'); ?></strong>
                     </div>
                     <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
                         <span>Site URL</span>

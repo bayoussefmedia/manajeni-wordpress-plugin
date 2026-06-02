@@ -21,10 +21,20 @@ class Manajeni_API_Client {
     private $api_key;
 
     /**
+     * @var string
+     */
+    private $api_secret;
+
+    /**
+     * @var string
+     */
+    private $api_email;
+
+    /**
      * @var array
      */
     private $endpoint_map = [
-        'test' => '/health',
+        'test' => '/status',
         'clients' => '/clients',
         'catalogue' => '/catalogue',
         'orders' => '/orders',
@@ -34,12 +44,16 @@ class Manajeni_API_Client {
     /**
      * @param string $api_url URL API optionnelle.
      * @param string $api_key Cle API optionnelle.
+     * @param string $api_secret Secret API optionnel.
+     * @param string $api_email Email API optionnel.
      */
-    public function __construct($api_url = '', $api_key = '') {
+    public function __construct($api_url = '', $api_key = '', $api_secret = '', $api_email = '') {
         $db = new Manajeni_DB();
 
-        $this->api_url = $this->normalize_base_url($api_url ?: get_option('manajeni_url', ''));
-        $this->api_key = $api_key ?: $db->get_api_key();
+        $this->api_url = $this->normalize_base_url($api_url ?: get_option('manajeni_url', 'https://manajeni.com/api/external/v1'));
+        $this->api_key = $api_key ?: (string) $db->get_api_key();
+        $this->api_secret = $api_secret ?: (string) $db->get_api_secret();
+        $this->api_email = $api_email ?: $db->get_api_email();
         $this->endpoint_map = apply_filters('manajeni_connector_api_endpoints', $this->endpoint_map);
     }
 
@@ -50,10 +64,6 @@ class Manajeni_API_Client {
      */
     public function test_connection() {
         $response = $this->request('GET', $this->get_endpoint('test'));
-
-        if (!$response['success'] && 404 === $response['code']) {
-            $response = $this->request('GET', $this->get_endpoint('clients'), [], ['per_page' => 1]);
-        }
 
         if ($response['success']) {
             return [
@@ -250,13 +260,13 @@ class Manajeni_API_Client {
     /**
      * Execute une requete HTTP.
      *
-     * @param string $method Methode HTTP.
-     * @param string $endpoint Endpoint relatif.
-     * @param array  $body Donnees a envoyer.
-     * @param array  $query Query string.
+     * @param string     $method Methode HTTP.
+     * @param string     $endpoint Endpoint relatif.
+     * @param array|null $body Donnees a envoyer.
+     * @param array      $query Query string.
      * @return array
      */
-    private function request($method, $endpoint, $body = [], $query = []) {
+    private function request($method, $endpoint, $body = null, $query = []) {
         if (empty($this->api_url)) {
             return $this->error_response(__('URL API Manajeni manquante.', 'manajeni-connector'));
         }
@@ -265,39 +275,37 @@ class Manajeni_API_Client {
             return $this->error_response(__('Cle API Manajeni manquante.', 'manajeni-connector'));
         }
 
+        $method = strtoupper($method);
         $url = untrailingslashit($this->api_url) . '/' . ltrim($endpoint, '/');
+
         if (!empty($query)) {
             $url = add_query_arg($query, $url);
         }
 
+        $raw_body = $this->build_raw_body($method, $body);
         $args = [
+            'method' => $method,
             'timeout' => (int) apply_filters('manajeni_connector_api_timeout', 20),
-            'headers' => [
-                'Accept' => 'application/json',
-                'Authorization' => 'Bearer ' . $this->api_key,
-                'X-Manajeni-Origin' => home_url(),
-            ],
+            'headers' => $this->build_headers($method, $url, $raw_body),
         ];
 
-        if ('GET' !== strtoupper($method)) {
-            $args['method'] = strtoupper($method);
+        if ('' !== $raw_body) {
+            $args['body'] = $raw_body;
             $args['headers']['Content-Type'] = 'application/json';
-            $args['body'] = wp_json_encode($body);
-            $response = wp_remote_post($url, $args);
-        } else {
-            $response = wp_remote_get($url, $args);
         }
+
+        $response = wp_remote_request($url, $args);
 
         if (is_wp_error($response)) {
             return $this->error_response($response->get_error_message());
         }
 
         $code = (int) wp_remote_retrieve_response_code($response);
-        $raw_body = wp_remote_retrieve_body($response);
-        $decoded = json_decode($raw_body, true);
+        $response_raw_body = wp_remote_retrieve_body($response);
+        $decoded = json_decode($response_raw_body, true);
 
         if ($code < 200 || $code >= 300) {
-            $message = $this->extract_error_message($decoded, $raw_body);
+            $message = $this->extract_error_message($decoded, $response_raw_body);
             return $this->error_response($message, $code, $decoded);
         }
 
@@ -310,6 +318,94 @@ class Manajeni_API_Client {
     }
 
     /**
+     * Construit les headers HTTP appropries au mode d'authentification.
+     *
+     * @param string $method Methode HTTP.
+     * @param string $url URL complete.
+     * @param string $raw_body Corps JSON exact.
+     * @return array
+     */
+    private function build_headers($method, $url, $raw_body) {
+        $headers = [
+            'Accept' => 'application/json',
+        ];
+
+        if ($this->uses_legacy_signature()) {
+            $origin = home_url();
+            $timestamp = (string) time();
+            $nonce = wp_generate_uuid4();
+
+            $headers['X-Manajeni-Key'] = $this->api_key;
+            $headers['X-Manajeni-Email'] = $this->api_email;
+            $headers['X-Manajeni-Origin'] = $origin;
+            $headers['X-Manajeni-Timestamp'] = $timestamp;
+            $headers['X-Manajeni-Nonce'] = $nonce;
+            $headers['X-Manajeni-Signature'] = $this->generate_legacy_signature($method, $url, $timestamp, $nonce, $origin, $this->api_email, $raw_body);
+
+            return $headers;
+        }
+
+        $headers['Authorization'] = 'Bearer ' . $this->api_key;
+        $headers['X-Manajeni-Origin'] = home_url();
+
+        return $headers;
+    }
+
+    /**
+     * Genere le corps JSON exact utilise pour la signature et l'envoi.
+     *
+     * @param string     $method Methode HTTP.
+     * @param array|null $body Donnees.
+     * @return string
+     */
+    private function build_raw_body($method, $body) {
+        if ('GET' === $method || null === $body) {
+            return '';
+        }
+
+        return wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
+     * Determine si la requete doit utiliser la signature legacy.
+     *
+     * @return bool
+     */
+    private function uses_legacy_signature() {
+        return 0 === strpos($this->api_key, 'mnj_');
+    }
+
+    /**
+     * Calcule la signature HMAC legacy Manajeni.
+     *
+     * Inference: la chaine signee suit l'ordre documente du service Laravel,
+     * chaque valeur etant concatenee sur une ligne avec le path URL uniquement.
+     *
+     * @param string $method Methode HTTP.
+     * @param string $url URL complete.
+     * @param string $timestamp Timestamp Unix.
+     * @param string $nonce Nonce unique.
+     * @param string $origin Origine WordPress.
+     * @param string $email Email associe.
+     * @param string $raw_body Corps JSON exact.
+     * @return string
+     */
+    private function generate_legacy_signature($method, $url, $timestamp, $nonce, $origin, $email, $raw_body) {
+        $path = (string) wp_parse_url($url, PHP_URL_PATH);
+        $payload = implode("\n", [
+            strtoupper($method),
+            $path,
+            (string) $timestamp,
+            (string) $nonce,
+            (string) $origin,
+            (string) $email,
+            (string) $raw_body,
+        ]);
+
+        return hash_hmac('sha256', $payload, (string) $this->api_secret);
+    }
+
+    /**
      * Normalise une URL de base.
      *
      * @param string $api_url URL brute.
@@ -317,6 +413,7 @@ class Manajeni_API_Client {
      */
     private function normalize_base_url($api_url) {
         $api_url = trim((string) $api_url);
+
         if (empty($api_url)) {
             return '';
         }
@@ -331,7 +428,7 @@ class Manajeni_API_Client {
      * @return string
      */
     private function get_endpoint($key) {
-        return isset($this->endpoint_map[$key]) ? $this->endpoint_map[$key] : '/' . $key;
+        return isset($this->endpoint_map[$key]) ? $this->endpoint_map[$key] : '/' . ltrim($key, '/');
     }
 
     /**
@@ -347,6 +444,7 @@ class Manajeni_API_Client {
         }
 
         $data = $response['data'];
+
         if (isset($data[$key]) && is_array($data[$key])) {
             return $data[$key];
         }
@@ -392,7 +490,7 @@ class Manajeni_API_Client {
      * @return array
      */
     private function delete_resource($endpoint, $id) {
-        return $this->request('DELETE', trailingslashit($endpoint) . absint($id));
+        return $this->request('DELETE', trailingslashit($endpoint) . absint($id), null);
     }
 
     /**

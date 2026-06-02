@@ -64,9 +64,9 @@ class Manajeni_Session {
     /**
      * Connecte le site apres verification API.
      */
-    public function login($api_key, $api_url, $connection_date = null) {
+    public function login($api_key, $api_url, $connection_date = null, $api_secret = '', $api_email = '') {
         $connection_date = $connection_date ?: current_time('mysql');
-        $result = $this->db->save_connection($api_key, $connection_date);
+        $result = $this->db->save_connection($api_key, $api_secret, $api_email, $connection_date);
         
         if ($result) {
             $this->xml_handler->declare_url($api_url);
