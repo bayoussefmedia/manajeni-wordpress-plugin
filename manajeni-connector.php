@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Manajeni Connector
- * Description: <?php _e('Connecteur entre WordPress et Manajeni avec système de session sécurisé', 'manajeni-connector'); ?>
- * Version: 0.5.0
+ * Description: Connecteur entre WordPress et Manajeni avec systeme de session securise.
+ * Version: 0.6.1
  * Author: Manajeni
  * Text Domain: manajeni-connector
  */
