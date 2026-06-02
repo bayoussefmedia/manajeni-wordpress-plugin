@@ -540,6 +540,36 @@ class Manajeni_API_Client {
             $flat_capabilities = array_merge($flat_capabilities, $scopes);
         }
 
+        if ($this->is_list_array($resources)) {
+            foreach ($resources as $resource_item) {
+                if (!is_array($resource_item)) {
+                    continue;
+                }
+
+                $resource_name = isset($resource_item['resource']) && is_string($resource_item['resource'])
+                    ? sanitize_key($resource_item['resource'])
+                    : '';
+                $scope = isset($resource_item['scope']) && is_string($resource_item['scope'])
+                    ? sanitize_text_field($resource_item['scope'])
+                    : '';
+                $granted = !empty($resource_item['granted']);
+                $application_allowed = !empty($resource_item['application_allowed']);
+
+                if ('' === $resource_name) {
+                    continue;
+                }
+
+                if (!isset($resource_capabilities[$resource_name])) {
+                    $resource_capabilities[$resource_name] = [];
+                }
+
+                if ('' !== $scope && $granted && $application_allowed) {
+                    $resource_capabilities[$resource_name][] = $scope;
+                    $flat_capabilities[] = $scope;
+                }
+            }
+        }
+
         $top_level_capabilities = [];
         if (isset($data['capabilities']) && is_array($data['capabilities'])) {
             $top_level_capabilities = $data['capabilities'];
@@ -555,6 +585,10 @@ class Manajeni_API_Client {
             $flat_capabilities,
             $this->normalize_string_list($top_level_capabilities)
         )));
+
+        foreach ($resource_capabilities as $resource_name => $scopes) {
+            $resource_capabilities[$resource_name] = $this->normalize_string_list($scopes);
+        }
 
         return [
             'resources' => $resources,

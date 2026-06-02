@@ -137,6 +137,25 @@ class Manajeni_Apps_Access {
     }
 
     /**
+     * Retourne le mapping resource -> application.
+     *
+     * @return array
+     */
+    public static function get_resource_mapping() {
+        return [
+            'clients' => 'clients',
+            'catalogue' => 'catalogue',
+            'projects' => 'projets',
+            'quotes' => 'devis',
+            'payments' => 'paiements',
+            'invoices' => 'factures',
+            'appointments' => 'rendez_vous',
+            'tasks' => 'taches',
+            'reports' => 'rapports',
+        ];
+    }
+
+    /**
      * Retourne les applications visibles selon l'API.
      *
      * @return array
@@ -191,14 +210,51 @@ class Manajeni_Apps_Access {
 
         $allowed = [];
         $scope_mapping = self::get_scope_mapping();
+        $resource_mapping = self::get_resource_mapping();
+        $flat_capabilities = isset($capabilities['data']['capabilities']) && is_array($capabilities['data']['capabilities'])
+            ? $capabilities['data']['capabilities']
+            : [];
+        $resource_capabilities = isset($capabilities['data']['resource_capabilities']) && is_array($capabilities['data']['resource_capabilities'])
+            ? $capabilities['data']['resource_capabilities']
+            : [];
 
-        foreach ($capabilities['data']['capabilities'] as $scope) {
+        foreach ($flat_capabilities as $scope) {
             if (isset($scope_mapping[$scope])) {
                 $allowed[] = $scope_mapping[$scope];
             }
         }
 
+        foreach ($resource_capabilities as $resource => $scopes) {
+            $resource = sanitize_key($resource);
+
+            if (isset($resource_mapping[$resource])) {
+                $allowed[] = $resource_mapping[$resource];
+                continue;
+            }
+
+            if (!is_array($scopes)) {
+                continue;
+            }
+
+            foreach ($scopes as $scope) {
+                if (isset($scope_mapping[$scope])) {
+                    $allowed[] = $scope_mapping[$scope];
+                }
+            }
+        }
+
         $allowed = array_values(array_unique(array_filter($allowed, 'is_string')));
+
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf(
+                'Manajeni capabilities detected: %d scopes',
+                count($flat_capabilities)
+            ));
+            error_log(sprintf(
+                'Manajeni allowed apps: %s',
+                empty($allowed) ? '(none)' : implode(', ', $allowed)
+            ));
+        }
 
         set_transient(self::APP_ACCESS_TRANSIENT, $allowed, self::CACHE_TTL);
 
