@@ -21,6 +21,10 @@ define('MANAJENI_CONNECTOR_VERSION', '0.6.1');
 define('MANAJENI_CONNECTOR_PATH', plugin_dir_path(__FILE__));
 define('MANAJENI_CONNECTOR_URL', plugin_dir_url(__FILE__));
 
+if (!defined('MANAJENI_CONNECTOR_DEV_MODE')) {
+    define('MANAJENI_CONNECTOR_DEV_MODE', false);
+}
+
 // Fonction de redirection sécurisée
 function manajeni_safe_redirect($url) {
     while (ob_get_level()) {
@@ -37,6 +41,38 @@ function manajeni_safe_redirect($url) {
         <?php
         exit;
     }
+}
+
+/**
+ * Indique si le plugin tourne en mode developpement.
+ *
+ * @return bool
+ */
+function manajeni_connector_is_dev_mode() {
+    return (bool) MANAJENI_CONNECTOR_DEV_MODE;
+}
+
+/**
+ * Retourne le client API approprie.
+ *
+ * @param string $api_url URL API optionnelle.
+ * @param string $api_key Cle API optionnelle.
+ * @return object
+ */
+function manajeni_connector_get_api_client($api_url = '', $api_key = '') {
+    if (manajeni_connector_is_dev_mode()) {
+        if (!class_exists('Manajeni_Fake_API_Client')) {
+            require_once MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-fake-api-client.php';
+        }
+
+        return new Manajeni_Fake_API_Client();
+    }
+
+    if (!class_exists('Manajeni_API_Client')) {
+        require_once MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-api-client.php';
+    }
+
+    return new Manajeni_API_Client($api_url, $api_key);
 }
 
 // Chargement automatique des classes
@@ -89,9 +125,6 @@ register_deactivation_hook(__FILE__, function() {
 });
 
 add_action('manajeni_hourly_sync', function() {
-    if (!class_exists('Manajeni_Fake_API_Client')) {
-        require_once MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-fake-api-client.php';
-    }
     // Simulation de synchronisation
     manajeni_connector_add_log('cron_sync', 'success', 'Synchronisation automatique réussie');
 });
@@ -154,7 +187,7 @@ add_action('admin_menu', function() {
                 if (file_exists($file)) {
                     global $apps_handler, $api_client;
                     $apps_handler = new Manajeni_Apps_Handler();
-                    $api_client = new Manajeni_Fake_API_Client();
+                    $api_client = manajeni_connector_get_api_client();
                     include $file;
                 } else {
                     echo '<div class="wrap"><div class="notice notice-warning"><p>Module "' . esc_html($app) . '" en cours de développement.</p></div></div>';

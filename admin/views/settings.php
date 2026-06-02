@@ -10,21 +10,14 @@ if (!current_user_can('manage_options')) {
     wp_die('Accès non autorisé.');
 }
 
-$simulation_mode = get_option('manajeni_simulation_mode', true);
 $logs = get_option('manajeni_connector_logs', []);
 $xml_handler = new Manajeni_XML_Handler();
+$db = new Manajeni_DB();
+$api_url = get_option('manajeni_url', '');
+$masked_api_key = $db->get_masked_api_key();
 
 $message = '';
 $message_type = '';
-
-if (isset($_POST['toggle_mode']) && check_admin_referer('manajeni_settings_nonce')) {
-    $new_mode = !$simulation_mode;
-    update_option('manajeni_simulation_mode', $new_mode);
-    $message = 'Mode opérationnel mis à jour : ' . ($new_mode ? 'Simulation' : 'Production');
-    $message_type = 'success';
-    manajeni_connector_add_log('settings_change_mode', 'success', $message);
-    $simulation_mode = $new_mode;
-}
 
 if (isset($_POST['clear_logs']) && check_admin_referer('manajeni_settings_nonce')) {
     update_option('manajeni_connector_logs', []);
@@ -35,11 +28,13 @@ if (isset($_POST['clear_logs']) && check_admin_referer('manajeni_settings_nonce'
 
 if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonce')) {
     $options_to_delete = [
-        'manajeni_url', 'manajeni_simulation_mode', 'manajeni_connector_logs', 
-        'manajeni_connected', 'manajeni_user_session', 'manajeni_temp_email'
+        'manajeni_url', 'manajeni_connector_logs', 'manajeni_connected',
+        'manajeni_user_session', 'manajeni_api_key_crypted', 'manajeni_api_key_masked',
+        'manajeni_last_connection', 'manajeni_last_activity'
     ];
     foreach($options_to_delete as $opt) delete_option($opt);
-    $xml_handler->declare_url('');
+    $xml_handler->clear_api_key_in_xml(true);
+    update_option('manajeni_need_first_login', true, false);
     $message = 'Le connecteur a été réinitialisé. Redirection...';
     $message_type = 'success';
     echo '<script>setTimeout(function(){ window.location.href = "' . admin_url('admin.php?page=manajeni-first-login') . '"; }, 2000);</script>';
@@ -68,23 +63,38 @@ if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonc
             
             <div class="mj-table-wrapper" style="padding:30px;">
                 <h3 style="font-family:'Outfit', sans-serif; font-size:18px; font-weight:800; margin-bottom:20px;">⚡ Mode Opérationnel</h3>
-                <form method="post">
-                    <?php wp_nonce_field('manajeni_settings_nonce'); ?>
-                    <div style="margin-bottom: 25px;">
-                        <?php if ($simulation_mode): ?>
-                            <div style="background: var(--mj-warning-soft); color: var(--mj-warning); padding: 15px; border-radius: 12px; font-weight: 800; text-align: center; border: 1px solid rgba(245, 158, 11, 0.2);">
-                                🧪 MODE SIMULATION
-                            </div>
-                        <?php else: ?>
-                            <div style="background: var(--mj-success-soft); color: var(--mj-success); padding: 15px; border-radius: 12px; font-weight: 800; text-align: center; border: 1px solid rgba(16, 185, 129, 0.2);">
-                                🌐 MODE PRODUCTION
-                            </div>
-                        <?php endif; ?>
+                <div style="margin-bottom: 18px;">
+                    <?php if (manajeni_connector_is_dev_mode()): ?>
+                        <div style="background: var(--mj-warning-soft); color: var(--mj-warning); padding: 15px; border-radius: 12px; font-weight: 800; text-align: center; border: 1px solid rgba(245, 158, 11, 0.2);">
+                            🧪 MODE DEVELOPPEMENT
+                        </div>
+                    <?php else: ?>
+                        <div style="background: var(--mj-success-soft); color: var(--mj-success); padding: 15px; border-radius: 12px; font-weight: 800; text-align: center; border: 1px solid rgba(16, 185, 129, 0.2);">
+                            🌐 MODE API REEL
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <p style="font-size:13px; color:var(--mj-slate-500); margin:0;">
+                    Le mode est pilote par la constante <code>MANAJENI_CONNECTOR_DEV_MODE</code>.
+                </p>
+            </div>
+
+            <div class="mj-table-wrapper" style="padding:30px;">
+                <h3 style="font-family:'Outfit', sans-serif; font-size:18px; font-weight:800; margin-bottom:20px;">🔐 Connexion API</h3>
+                <div style="display:grid; gap:12px;">
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
+                        <span>API URL</span>
+                        <strong style="color:var(--mj-slate-900)"><?php echo esc_html($api_url ?: 'Non configuree'); ?></strong>
                     </div>
-                    <button type="submit" name="toggle_mode" class="mj-btn-primary" style="width: 100%; justify-content: center;">
-                        <?php echo $simulation_mode ? 'Passer en Production 🔌' : 'Passer en Simulation 🧪'; ?>
-                    </button>
-                </form>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
+                        <span>API Key</span>
+                        <strong style="color:var(--mj-slate-900)"><?php echo esc_html($masked_api_key ?: 'Non configuree'); ?></strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--mj-slate-500)">
+                        <span>Site URL</span>
+                        <strong style="color:var(--mj-slate-900)"><?php echo esc_html(home_url()); ?></strong>
+                    </div>
+                </div>
             </div>
             
             <div class="mj-table-wrapper" style="padding:30px;">

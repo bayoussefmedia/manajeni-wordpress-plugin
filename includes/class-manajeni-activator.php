@@ -129,10 +129,6 @@ class Manajeni_Activator {
      * Définir les options par défaut
      */
     private static function set_default_options() {
-        if (!get_option('manajeni_simulation_mode')) {
-            add_option('manajeni_simulation_mode', true);
-        }
-        
         if (!get_option('manajeni_connector_logs')) {
             add_option('manajeni_connector_logs', []);
         }
@@ -143,6 +139,10 @@ class Manajeni_Activator {
         
         if (!get_option('manajeni_url')) {
             add_option('manajeni_url', '');
+        }
+
+        if (!get_option('manajeni_api_key_masked')) {
+            add_option('manajeni_api_key_masked', '');
         }
     }
 }

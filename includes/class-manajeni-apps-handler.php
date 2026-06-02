@@ -13,7 +13,7 @@ class Manajeni_Apps_Handler {
     private $api_client;
     
     public function __construct() {
-        $this->api_client = new Manajeni_Fake_API_Client();
+        $this->api_client = manajeni_connector_get_api_client();
     }
     
     /**

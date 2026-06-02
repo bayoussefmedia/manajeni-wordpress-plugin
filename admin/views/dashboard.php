@@ -10,9 +10,8 @@ if (!current_user_can('manage_options')) {
     wp_die('Accès non autorisé.');
 }
 
-$simulation_mode = get_option('manajeni_simulation_mode', true);
-$session = get_option('manajeni_user_session', []);
-$user_email = isset($session['email']) ? $session['email'] : 'Administrateur';
+$current_user = wp_get_current_user();
+$user_label = $current_user && $current_user->exists() ? $current_user->display_name : 'Administrateur';
 
 $applications = [
     'clients' => [
@@ -112,12 +111,12 @@ $applications = [
                 </div>
             </div>
             <div class="mj-user-info">
-                <div style="width:44px; height:44px; border-radius:50%; background:linear-gradient(135deg, #6366f1, #a855f7); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px;">
-                    <?php echo strtoupper(substr($user_email, 0, 1)); ?>
+                    <div style="width:44px; height:44px; border-radius:50%; background:linear-gradient(135deg, #6366f1, #a855f7); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px;">
+                    <?php echo esc_html(strtoupper(substr($user_label, 0, 1))); ?>
                 </div>
                 <div style="flex-grow:1">
-                    <div style="font-weight:800; font-size:15px;"><?php echo esc_html($user_email); ?></div>
-                    <div style="font-size:11px; opacity:0.7"><?php echo $simulation_mode ? 'Mode Simulation' : 'Production Active'; ?></div>
+                    <div style="font-weight:800; font-size:15px;"><?php echo esc_html($user_label); ?></div>
+                    <div style="font-size:11px; opacity:0.7"><?php echo manajeni_connector_is_dev_mode() ? 'Mode Developpement' : 'Production API Active'; ?></div>
                 </div>
                 <a href="<?php echo admin_url('admin.php?page=manajeni-logout'); ?>" class="mj-logout-btn">Logout 🚪</a>
             </div>

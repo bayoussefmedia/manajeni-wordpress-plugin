@@ -36,33 +36,20 @@ class Manajeni_Session {
             return false;
         }
         
-        // 3. Vérifier la session en cours
-        $user_email = $this->get_current_user_email();
-        
-        if (!$user_email) {
-            $this->redirect_to_login();
-            return false;
-        }
-        
-        // 4. Vérifier que la session est valide dans la base de données
-        if (!$this->db->is_connected($user_email)) {
+        // 3. Vérifier uniquement la présence d'une clé API valide
+        if (!$this->db->has_api_key()) {
             $this->clear_session();
-            $this->redirect_to_login();
-            return false;
-        }
-        
-        // 5. Vérifier que l'API Key existe et est valide
-        $api_key = $this->db->get_api_key($user_email);
-        if (!$api_key) {
             $this->redirect_to_api_connection();
             return false;
         }
         
-        // 6. Vérifier que l'URL est déclarée dans le XML
+        // 4. Vérifier que l'URL API est déclarée dans le XML
         if (!$this->xml_handler->is_url_declared()) {
             $this->redirect_to_url_config();
             return false;
         }
+
+        $this->db->update_activity();
         
         return true;
     }
@@ -71,28 +58,22 @@ class Manajeni_Session {
      * Vérifie si l'utilisateur est actuellement connecté
      */
     public function is_connected() {
-        $user_email = $this->get_current_user_email();
-        if (!$user_email) {
-            return false;
-        }
-        return $this->db->is_connected($user_email);
+        return $this->db->is_connected() && $this->xml_handler->is_url_declared();
     }
     
     /**
-     * Connecte l'utilisateur (après vérification API)
+     * Connecte le site apres verification API.
      */
-    public function login($email, $api_key, $connection_date = null) {
-        // Sauvegarder dans la base de données
-        $result = $this->db->save_connection($email, $api_key, $connection_date);
+    public function login($api_key, $api_url, $connection_date = null) {
+        $connection_date = $connection_date ?: current_time('mysql');
+        $result = $this->db->save_connection($api_key, $connection_date);
         
         if ($result) {
-            // Mettre à jour le XML avec une clé différente
+            $this->xml_handler->declare_url($api_url);
             $this->xml_handler->update_api_key_in_xml($api_key, $connection_date);
-            
-            // Stocker en session
-            $this->set_session($email);
-            
-            manajeni_connector_add_log('session_login', 'success', 'Utilisateur connecté: ' . $email);
+            update_option('manajeni_url', esc_url_raw($api_url), false);
+            $this->set_session();
+            manajeni_connector_add_log('session_login', 'success', 'Connexion API active pour ' . home_url());
             return true;
         }
         
@@ -103,40 +84,23 @@ class Manajeni_Session {
      * Déconnecte l'utilisateur
      */
     public function logout() {
-        $email = $this->get_current_user_email();
-        
-        if ($email) {
-            $this->db->disconnect($email);
-        }
-        
+        $this->db->disconnect();
+        $this->xml_handler->clear_api_key_in_xml(false);
         $this->clear_session();
-        manajeni_connector_add_log('session_logout', 'success', 'Utilisateur déconnecté');
+        manajeni_connector_add_log('session_logout', 'success', 'Connexion API retiree');
     }
     
     /**
      * Définit la session
      */
-    private function set_session($email) {
+    private function set_session() {
         $session_data = [
-            'email' => $email,
+            'user_id' => get_current_user_id(),
             'login_time' => current_time('timestamp'),
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+            'site_url' => home_url(),
         ];
         
         update_option($this->session_key, $session_data);
-    }
-    
-    /**
-     * Récupère l'email de l'utilisateur connecté
-     */
-    private function get_current_user_email() {
-        $session = get_option($this->session_key, []);
-        
-        if (isset($session['email']) && !empty($session['email'])) {
-            return $session['email'];
-        }
-        
-        return null;
     }
     
     /**
@@ -163,9 +127,9 @@ class Manajeni_Session {
      */
     private function redirect_to_login() {
         if (function_exists('manajeni_safe_redirect')) {
-            manajeni_safe_redirect(admin_url('admin.php?page=manajeni-first-login'));
+            manajeni_safe_redirect(admin_url('admin.php?page=manajeni-api-connection'));
         } else {
-            wp_redirect(admin_url('admin.php?page=manajeni-first-login'));
+            wp_redirect(admin_url('admin.php?page=manajeni-api-connection'));
         }
         exit;
     }

@@ -9,33 +9,58 @@ if (!current_user_can('manage_options')) {
 
 $error = '';
 $success = '';
-$email = get_option('manajeni_temp_email', '');
+$db = new Manajeni_DB();
+$current_api_url = get_option('manajeni_url', '');
+$masked_api_key = $db->get_masked_api_key();
+
+if (isset($_POST['test_connection']) && check_admin_referer('manajeni_api_connection_nonce')) {
+    $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
+    $api_key = sanitize_text_field(wp_unslash($_POST['api_key']));
+
+    if (empty($api_url) || empty($api_key)) {
+        $error = 'Veuillez renseigner l’URL API et la clé API pour tester la connexion.';
+    } else {
+        $api_client = new Manajeni_API_Client($api_url, $api_key);
+        $result = $api_client->test_connection();
+
+        if ($result['success']) {
+            $success = 'Connexion API validée. Vous pouvez maintenant enregistrer la configuration.';
+        } else {
+            $error = 'Erreur API : ' . $result['message'];
+        }
+    }
+}
 
 if (isset($_POST['save_api_key']) && check_admin_referer('manajeni_api_connection_nonce')) {
-    $api_key = sanitize_text_field($_POST['api_key']);
-    $password = sanitize_text_field($_POST['password']);
-    $simulation_mode = get_option('manajeni_simulation_mode', true);
-    
-    if ($simulation_mode) {
-        if (!empty($api_key) && !empty($password)) {
-            if ($password === 'password') {
-                $session = new Manajeni_Session();
-                $connection_date = current_time('mysql');
-                if ($session->login($email, $api_key, $connection_date)) {
-                    delete_option('manajeni_temp_email');
-                    $success = 'Connexion sécurisée établie ! Redirection vers votre Hub...';
-                    echo '<script>setTimeout(function(){ window.location.href = "' . admin_url('admin.php?page=manajeni-dashboard') . '"; }, 2000);</script>';
-                } else {
-                    $error = 'Erreur d’initialisation de la session.';
-                }
-            } else {
-                $error = 'Mot de passe Manajeni incorrect.';
-            }
-        } else {
-            $error = 'Veuillez remplir tous les champs.';
-        }
+    $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
+    $api_key = sanitize_text_field(wp_unslash($_POST['api_key']));
+
+    if (empty($api_url)) {
+        $error = 'Veuillez saisir une URL API valide.';
+    } elseif (empty($api_key) && empty($masked_api_key)) {
+        $error = 'Veuillez saisir une clé API valide.';
     } else {
-        $error = 'Le mode API réelle n’est pas encore disponible.';
+        if (empty($api_key)) {
+            $api_key = $db->get_api_key();
+        }
+
+        $api_client = new Manajeni_API_Client($api_url, $api_key);
+        $result = $api_client->test_connection();
+
+        if (!$result['success']) {
+            $error = 'Erreur API : ' . $result['message'];
+        } else {
+            $session = new Manajeni_Session();
+            $connection_date = current_time('mysql');
+
+            if ($session->login($api_key, $api_url, $connection_date)) {
+                delete_option('manajeni_need_first_login');
+                $success = 'Connexion API sécurisée établie. Redirection vers le tableau de bord...';
+                echo '<script>setTimeout(function(){ window.location.href = "' . esc_url(admin_url('admin.php?page=manajeni-dashboard')) . '"; }, 1500);</script>';
+            } else {
+                $error = 'Erreur lors de la sauvegarde de la configuration API.';
+            }
+        }
     }
 }
 ?>
@@ -46,7 +71,7 @@ if (isset($_POST['save_api_key']) && check_admin_referer('manajeni_api_connectio
 
     <div style="margin-bottom: 40px; text-align:center;">
         <h2 style="font-family:'Outfit', sans-serif; font-size: 28px; font-weight: 800; color: var(--mj-slate-900); margin:0;">🔒 Sécurisation de l'accès</h2>
-        <p style="color: var(--mj-slate-500); font-size:16px; margin-top:8px;">Configurez vos clés d'accès API pour finaliser la jonction.</p>
+        <p style="color: var(--mj-slate-500); font-size:16px; margin-top:8px;">Configurez l'URL API Manajeni et la clé d'accès pour finaliser la jonction.</p>
     </div>
 
     <?php if ($error): ?>
@@ -67,29 +92,32 @@ if (isset($_POST['save_api_key']) && check_admin_referer('manajeni_api_connectio
             
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
                 <div class="mj-form-group">
-                    <label>📧 Identifiant Manajeni</label>
-                    <input type="email" class="mj-form-control" value="<?php echo esc_attr($email); ?>" readonly disabled style="background: var(--mj-slate-50); opacity:0.6;">
+                    <label>🌐 API URL</label>
+                    <input type="url" name="api_url" class="mj-form-control" value="<?php echo esc_attr($current_api_url); ?>" required placeholder="https://api.manajeni.com">
                 </div>
 
                 <div class="mj-form-group">
-                    <label>🔑 Confirmation Password</label>
-                    <input type="password" name="password" class="mj-form-control" required placeholder="••••••••">
+                    <label>🏠 Site URL</label>
+                    <input type="url" class="mj-form-control" value="<?php echo esc_attr(home_url()); ?>" readonly style="background: var(--mj-slate-50); opacity:0.8;">
                 </div>
             </div>
 
             <div class="mj-form-group" style="margin-top:20px;">
                 <label>💎 Clé API Primaire</label>
-                <input type="password" name="api_key" class="mj-form-control" required placeholder="Saisissez votre clé Manajeni">
+                <input type="password" name="api_key" class="mj-form-control" placeholder="<?php echo $masked_api_key ? esc_attr($masked_api_key) : 'Saisissez votre clé Manajeni'; ?>">
                 <div style="margin-top:12px; background:var(--mj-primary-soft); padding:12px; border-radius:10px; border-left:4px solid var(--mj-primary);">
                     <p style="margin:0; font-size:13px; color:var(--mj-primary); font-weight:600;">
-                        Indice : Votre clé API est disponible dans l'onglet "Développeurs" de votre plateforme.
+                        La clé API est chiffrée en stockage WordPress. Laissez le champ vide pour conserver la clé déjà enregistrée.
                     </p>
                 </div>
             </div>
             
             <div style="margin-top: 40px; display: flex; gap: 20px;">
+                <button type="submit" name="test_connection" class="mj-btn-secondary" style="flex: 1; justify-content: center; padding: 18px;">
+                    Tester la connexion
+                </button>
                 <button type="submit" name="save_api_key" class="mj-btn-primary" style="flex: 1; justify-content: center; padding: 18px;">
-                    ⚡ Établir la liaison sécurisée
+                    Enregistrer
                 </button>
                 <a href="<?php echo admin_url('admin.php?page=manajeni-dashboard'); ?>" class="mj-btn-secondary" style="display:flex; align-items:center;">
                     Annuler

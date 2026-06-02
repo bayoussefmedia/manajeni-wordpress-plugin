@@ -9,14 +9,7 @@ if (!defined('ABSPATH')) {
 }
 
 class Manajeni_DB {
-    
-    private $table_name;
-    
-    public function __construct() {
-        global $wpdb;
-        $this->table_name = $wpdb->prefix . 'manajeni_connection';
-    }
-    
+
     /**
      * Crypte une clé API
      */
@@ -35,11 +28,19 @@ class Manajeni_DB {
      * Décrypte une clé API
      */
     public function decrypt_api_key($encrypted_data) {
+        if (empty($encrypted_data)) {
+            return null;
+        }
+
         $encryption_key = wp_salt('auth');
         $method = 'AES-256-CBC';
         $iv_length = openssl_cipher_iv_length($method);
         
         $data = base64_decode($encrypted_data);
+        if (false === $data || strlen($data) <= $iv_length) {
+            return null;
+        }
+
         $iv = substr($data, 0, $iv_length);
         $encrypted = substr($data, $iv_length);
         
@@ -49,154 +50,84 @@ class Manajeni_DB {
     /**
      * Sauvegarde la connexion dans la base de données
      */
-    public function save_connection($email, $api_key, $connection_date = null) {
-        global $wpdb;
-        
+    public function save_connection($api_key, $connection_date = null) {
         $encrypted_key = $this->encrypt_api_key($api_key);
-        $xml_key = $this->generate_xml_key($api_key);
-        
         $connection_date = $connection_date ?: current_time('mysql');
-        
-        // Vérifier si l'email existe déjà
-        $existing = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM {$this->table_name} WHERE email = %s",
-            sanitize_email($email)
-        ));
-        
-        if ($existing) {
-            // Mise à jour
-            $result = $wpdb->update(
-                $this->table_name,
-                [
-                    'api_key_crypted' => $encrypted_key,
-                    'api_key_xml' => $xml_key,
-                    'connection_date' => $connection_date,
-                    'last_activity' => current_time('mysql'),
-                    'status' => 'active'
-                ],
-                ['email' => sanitize_email($email)]
-            );
-        } else {
-            // Insertion
-            $result = $wpdb->insert(
-                $this->table_name,
-                [
-                    'email' => sanitize_email($email),
-                    'api_key_crypted' => $encrypted_key,
-                    'api_key_xml' => $xml_key,
-                    'connection_date' => $connection_date,
-                    'last_activity' => current_time('mysql'),
-                    'status' => 'active'
-                ]
-            );
-        }
-        
-        if ($result) {
-            manajeni_connector_add_log('db_save_connection', 'success', 'Connexion sauvegardée pour ' . $email);
-            return true;
-        }
-        
-        manajeni_connector_add_log('db_save_connection', 'error', 'Erreur sauvegarde pour ' . $email);
-        return false;
-    }
-    
-    /**
-     * Génère une clé XML différente de la clé DB
-     */
-    private function generate_xml_key($api_key) {
-        return hash_hmac('sha256', $api_key . wp_salt('nonce'), wp_salt('auth'));
-    }
-    
-    /**
-     * Vérifie si l'utilisateur est connecté (session valide)
-     */
-    public function is_connected($email) {
-        global $wpdb;
-        
-        $result = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE email = %s AND status = 'active'",
-            sanitize_email($email)
-        ));
-        
-        if (!$result) {
-            return false;
-        }
-        
-        // Vérifier la date de dernière activité (session expire après 24h par défaut)
-        $last_activity = strtotime($result->last_activity);
-        $timeout = apply_filters('manajeni_session_timeout', 86400); // 24 heures
-        
-        if (time() - $last_activity > $timeout) {
-            $this->disconnect($email);
-            return false;
-        }
-        
-        // Mettre à jour la dernière activité
-        $this->update_activity($email);
-        
+
+        update_option('manajeni_api_key_crypted', $encrypted_key, false);
+        update_option('manajeni_api_key_masked', $this->mask_api_key($api_key), false);
+        update_option('manajeni_connected', true, false);
+        update_option('manajeni_last_connection', $connection_date, false);
+
+        manajeni_connector_add_log('db_save_connection', 'success', 'Connexion API sauvegardee');
+
         return true;
     }
     
     /**
-     * Met à jour la dernière activité
+     * Verifie si une connexion API est active.
      */
-    public function update_activity($email) {
-        global $wpdb;
-        
-        $wpdb->update(
-            $this->table_name,
-            ['last_activity' => current_time('mysql')],
-            ['email' => sanitize_email($email)]
-        );
+    public function is_connected() {
+        return (bool) get_option('manajeni_connected', false) && $this->has_api_key();
     }
     
     /**
-     * Déconnecte l'utilisateur
+     * Met a jour la date de derniere activite.
      */
-    public function disconnect($email) {
-        global $wpdb;
-        
-        return $wpdb->update(
-            $this->table_name,
-            ['status' => 'disconnected'],
-            ['email' => sanitize_email($email)]
-        );
+    public function update_activity() {
+        update_option('manajeni_last_activity', current_time('mysql'), false);
     }
     
     /**
-     * Récupère la clé API cryptée pour un email
+     * Deconnecte le site.
      */
-    public function get_api_key($email) {
-        global $wpdb;
-        
-        $result = $wpdb->get_var($wpdb->prepare(
-            "SELECT api_key_crypted FROM {$this->table_name} WHERE email = %s",
-            sanitize_email($email)
-        ));
-        
-        if ($result) {
-            return $this->decrypt_api_key($result);
+    public function disconnect() {
+        delete_option('manajeni_api_key_crypted');
+        delete_option('manajeni_api_key_masked');
+        delete_option('manajeni_connected');
+        delete_option('manajeni_last_connection');
+        delete_option('manajeni_last_activity');
+
+        manajeni_connector_add_log('db_disconnect', 'success', 'Connexion API supprimee');
+
+        return true;
+    }
+    
+    /**
+     * Recupere la cle API decryptee.
+     */
+    public function get_api_key() {
+        return $this->decrypt_api_key(get_option('manajeni_api_key_crypted', ''));
+    }
+    
+    /**
+     * Indique si une cle API existe.
+     */
+    public function has_api_key() {
+        return !empty($this->get_api_key());
+    }
+
+    /**
+     * Recupere une version masquee de la cle API.
+     *
+     * @return string
+     */
+    public function get_masked_api_key() {
+        return (string) get_option('manajeni_api_key_masked', '');
+    }
+
+    /**
+     * Masque une cle API pour affichage.
+     *
+     * @param string $api_key Cle API.
+     * @return string
+     */
+    private function mask_api_key($api_key) {
+        $length = strlen($api_key);
+        if ($length <= 8) {
+            return str_repeat('*', $length);
         }
-        
-        return null;
-    }
-    
-    /**
-     * Vérifie si les identifiants sont valides (vérification API)
-     */
-    public function verify_credentials($email, $password) {
-        // Appel à l'API Manajeni pour vérifier le compte
-        $simulation_mode = get_option('manajeni_simulation_mode', true);
-        
-        if ($simulation_mode) {
-            // Mode simulation : accepter test@manajeni.com / password
-            if ($email === 'test@manajeni.com' && $password === 'password') {
-                return ['success' => true, 'message' => 'Compte valide'];
-            }
-            return ['success' => false, 'message' => 'Compte inexistant. Utilisez test@manajeni.com / password'];
-        }
-        
-        // TODO: Appel API réelle
-        return ['success' => false, 'message' => 'Mode API réelle - À implémenter'];
+
+        return substr($api_key, 0, 4) . str_repeat('*', max(0, $length - 8)) . substr($api_key, -4);
     }
 }

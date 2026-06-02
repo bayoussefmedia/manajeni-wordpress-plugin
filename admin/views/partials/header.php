@@ -3,7 +3,9 @@
  * Header Partial - Premium SaaS Experience
  */
 
-$session_data = get_option('manajeni_temp_email') ?: (get_option('manajeni_user_session')['email'] ?? 'Administrateur');
+$current_user = wp_get_current_user();
+$session_data = $current_user && $current_user->exists() ? $current_user->display_name : parse_url(home_url(), PHP_URL_HOST);
+$avatar_seed = $current_user && $current_user->exists() ? $current_user->user_email : home_url();
 ?>
 
 <div class="mj-header" style="padding:12px 24px; background:white; border-radius:16px; margin-bottom:30px; display:flex; justify-content:space-between; align-items:center; box-shadow: var(--mj-shadow-sm);">
@@ -15,7 +17,7 @@ $session_data = get_option('manajeni_temp_email') ?: (get_option('manajeni_user_
     <div class="mj-user-nav" style="position:relative;">
         <div class="mj-user-trigger" id="mjUserTrigger" style="display:flex; align-items:center; gap:12px; cursor:pointer; padding:6px 12px; border-radius:30px; transition:background 0.2s;">
             <div class="mj-avatar" style="width:32px; height:32px; border-radius:50%; border:2px solid var(--mj-primary-soft); overflow:hidden;">
-                <img src="https://www.gravatar.com/avatar/<?php echo md5(strtolower(trim($session_data))); ?>?s=64&d=mp" alt="User" style="width:100%;">
+                <img src="https://www.gravatar.com/avatar/<?php echo esc_attr(md5(strtolower(trim($avatar_seed)))); ?>?s=64&d=mp" alt="User" style="width:100%;">
             </div>
             <span style="font-weight: 600; font-size:13px; color:var(--mj-slate-700)"><?php echo esc_html($session_data); ?></span>
             <span style="font-size: 10px; opacity:0.4">▼</span>

@@ -168,4 +168,35 @@ class Manajeni_XML_Handler {
         
         return 'unknown';
     }
+
+    /**
+     * Efface les informations de connexion API du XML.
+     *
+     * @param bool $clear_url Effacer egalement l'URL.
+     * @return bool
+     */
+    public function clear_api_key_in_xml($clear_url = false) {
+        if (!file_exists($this->xml_file_path)) {
+            $this->create_default_xml();
+        }
+
+        $xml_content = simplexml_load_file($this->xml_file_path);
+        if (!$xml_content) {
+            return false;
+        }
+
+        $xml_content->api->key = 'null';
+        $xml_content->api->key['encrypted'] = 'false';
+        $xml_content->api->date_connection = 'null';
+        $xml_content->connection->status = 'not_configured';
+        $xml_content->connection->last_connection = 'null';
+
+        if ($clear_url) {
+            $xml_content->settings->url = 'null';
+        }
+
+        $xml_content->asXML($this->xml_file_path);
+
+        return true;
+    }
 }

@@ -9,19 +9,15 @@ if (!current_user_can('manage_options')) {
     wp_die('Accès non autorisé.');
 }
 
-$simulation_mode = get_option('manajeni_simulation_mode', true);
 $db = new Manajeni_DB();
-$session = get_option('manajeni_user_session', []);
-$user_email = isset($session['email']) ? $session['email'] : '';
-$api_key = $db->get_api_key($user_email);
+$api_key = $db->get_api_key();
+$api_client = manajeni_connector_get_api_client();
+$items = $api_client->get_catalogue();
+$api_error = '';
 
-$items = [
-    ['id' => 1, 'name' => 'Service Design Logo', 'type' => 'service', 'price' => 1500, 'status' => 'active', 'description' => 'Création de logo professionnel'],
-    ['id' => 2, 'name' => 'Produit Test Premium', 'type' => 'product', 'price' => 500, 'status' => 'active', 'description' => 'Produit premium avec support'],
-    ['id' => 3, 'name' => 'Service Consultation', 'type' => 'service', 'price' => 800, 'status' => 'active', 'description' => 'Consultation stratégique'],
-    ['id' => 4, 'name' => 'Pack Marketing Digital', 'type' => 'service', 'price' => 2500, 'status' => 'active', 'description' => 'Pack complet marketing'],
-    ['id' => 5, 'name' => 'Produit Basique', 'type' => 'product', 'price' => 99, 'status' => 'inactive', 'description' => 'Produit d\'entrée de gamme'],
-];
+if (!manajeni_connector_is_dev_mode() && empty($items)) {
+    $api_error = 'Aucune donnee catalogue n\'a ete retournee par l\'API Manajeni.';
+}
 ?>
 
 <div class="mj-app-container">
@@ -38,12 +34,18 @@ $items = [
         </button>
     </div>
 
+    <?php if ($api_error): ?>
+        <div class="notice mj-notice notice-error">
+            <p><strong><?php echo esc_html($api_error); ?></strong></p>
+        </div>
+    <?php endif; ?>
+
     <!-- Mode Status Bar -->
     <div style="background: white; padding: 20px 30px; border-radius: 20px; box-shadow: var(--mj-shadow-sm); margin-bottom: 40px; border: 1px solid var(--mj-slate-100); display: flex; align-items: center; justify-content: space-between;">
         <div style="display: flex; align-items: center; gap: 15px;">
-            <div style="width:12px; height:12px; border-radius:50%; background:<?php echo $simulation_mode ? 'var(--mj-warning)' : 'var(--mj-success)'; ?>; animation: mjPulse 2s infinite;"></div>
+            <div style="width:12px; height:12px; border-radius:50%; background:<?php echo manajeni_connector_is_dev_mode() ? 'var(--mj-warning)' : 'var(--mj-success)'; ?>; animation: mjPulse 2s infinite;"></div>
             <span style="font-weight: 700; color: var(--mj-slate-700);">
-                Source de données : <?php echo $simulation_mode ? 'Instance de Simulation' : 'API Cloud Production'; ?>
+                Source de données : <?php echo manajeni_connector_is_dev_mode() ? 'Client de developpement' : 'API Manajeni'; ?>
             </span>
         </div>
         <div style="display:flex; gap:10px;">

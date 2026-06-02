@@ -14,13 +14,10 @@ class Manajeni_Rapports_Controller {
     private $apps_handler;
 
     public function __construct() {
-        if (!class_exists('Manajeni_Fake_API_Client')) {
-            require_once MANAJENI_CONNECTOR_PATH . 'services/class-manajeni-fake-api-client.php';
-        }
         if (!class_exists('Manajeni_Apps_Handler')) {
             require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-apps-handler.php';
         }
-        $this->api_client   = new Manajeni_Fake_API_Client();
+        $this->api_client   = manajeni_connector_get_api_client();
         $this->apps_handler = new Manajeni_Apps_Handler();
     }
 
