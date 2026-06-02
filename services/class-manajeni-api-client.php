@@ -378,9 +378,6 @@ class Manajeni_API_Client {
     /**
      * Calcule la signature HMAC legacy Manajeni.
      *
-     * Inference: la chaine signee suit l'ordre documente du service Laravel,
-     * chaque valeur etant concatenee sur une ligne avec le path URL uniquement.
-     *
      * @param string $method Methode HTTP.
      * @param string $url URL complete.
      * @param string $timestamp Timestamp Unix.
@@ -392,17 +389,17 @@ class Manajeni_API_Client {
      */
     private function generate_legacy_signature($method, $url, $timestamp, $nonce, $origin, $email, $raw_body) {
         $path = (string) wp_parse_url($url, PHP_URL_PATH);
-        $payload = implode("\n", [
+        $canonical = implode("\n", [
             strtoupper($method),
             $path,
             (string) $timestamp,
             (string) $nonce,
-            (string) $origin,
-            (string) $email,
-            (string) $raw_body,
+            mb_strtolower(trim((string) $origin)),
+            mb_strtolower(trim((string) $email)),
+            hash('sha256', (string) $raw_body),
         ]);
 
-        return hash_hmac('sha256', $payload, (string) $this->api_secret);
+        return hash_hmac('sha256', $canonical, (string) $this->api_secret);
     }
 
     /**
