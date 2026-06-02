@@ -88,6 +88,80 @@ function manajeni_connector_get_apps_access() {
     return new Manajeni_Apps_Access();
 }
 
+/**
+ * Retourne le logger de synchronisation.
+ *
+ * @return Manajeni_Sync_Logger
+ */
+function manajeni_connector_get_sync_logger() {
+    if (!class_exists('Manajeni_Sync_Logger')) {
+        require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-sync-logger.php';
+    }
+
+    return new Manajeni_Sync_Logger();
+}
+
+/**
+ * Retourne le mapper de synchronisation.
+ *
+ * @return Manajeni_Sync_Mapper
+ */
+function manajeni_connector_get_sync_mapper() {
+    if (!class_exists('Manajeni_Sync_Mapper')) {
+        require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-sync-mapper.php';
+    }
+
+    return new Manajeni_Sync_Mapper();
+}
+
+/**
+ * Indique si WooCommerce est actif.
+ *
+ * @return bool
+ */
+function manajeni_connector_is_woocommerce_active() {
+    return class_exists('WooCommerce') && function_exists('wc_get_product');
+}
+
+/**
+ * Retourne le secret webhook utilise pour valider les callbacks entrants.
+ *
+ * @return string
+ */
+function manajeni_connector_get_webhook_secret() {
+    $db = new Manajeni_DB();
+    $api_secret = (string) $db->get_api_secret();
+    if ('' !== $api_secret) {
+        return $api_secret;
+    }
+
+    $fallback = (string) get_option('manajeni_webhook_secret', '');
+    if ('' === $fallback) {
+        $fallback = wp_generate_password(32, false, false);
+        update_option('manajeni_webhook_secret', $fallback, false);
+    }
+
+    return $fallback;
+}
+
+/**
+ * Retourne le service WooCommerce Sync.
+ *
+ * @return Manajeni_WooCommerce_Sync
+ */
+function manajeni_connector_get_woocommerce_sync() {
+    static $sync_service = null;
+
+    if (null === $sync_service) {
+        if (!class_exists('Manajeni_WooCommerce_Sync')) {
+            require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-woocommerce-sync.php';
+        }
+        $sync_service = new Manajeni_WooCommerce_Sync();
+    }
+
+    return $sync_service;
+}
+
 // Chargement automatique des classes
 spl_autoload_register(function($class) {
     $prefix = 'Manajeni_';
@@ -130,16 +204,32 @@ register_activation_hook(__FILE__, function() {
     if (!wp_next_scheduled('manajeni_hourly_sync')) {
         wp_schedule_event(time(), 'hourly', 'manajeni_hourly_sync');
     }
+
+    if (!wp_next_scheduled('manajeni_sync_retry_event')) {
+        wp_schedule_event(time() + 300, 'manajeni_five_minutes', 'manajeni_sync_retry_event');
+    }
 });
 
 register_deactivation_hook(__FILE__, function() {
     wp_clear_scheduled_hook('manajeni_hourly_sync');
+    wp_clear_scheduled_hook('manajeni_sync_retry_event');
     manajeni_connector_add_log('deactivation', 'success', 'Plugin désactivé');
 });
 
 add_action('manajeni_hourly_sync', function() {
     // Simulation de synchronisation
     manajeni_connector_add_log('cron_sync', 'success', 'Synchronisation automatique réussie');
+});
+
+add_filter('cron_schedules', function($schedules) {
+    if (!isset($schedules['manajeni_five_minutes'])) {
+        $schedules['manajeni_five_minutes'] = [
+            'interval' => 300,
+            'display' => __('Toutes les 5 minutes', 'manajeni-connector'),
+        ];
+    }
+
+    return $schedules;
 });
 
 // Menu admin
@@ -158,7 +248,7 @@ add_action('admin_menu', function() {
     // Sous-menus
     add_submenu_page('manajeni-dashboard', 'Tableau de bord', '📊 Tableau de bord', 'manage_options', 'manajeni-dashboard', 'manajeni_dashboard_page');
     add_submenu_page('manajeni-dashboard', 'Connexion API', '🔑 Connexion API', 'manage_options', 'manajeni-api-connection', 'manajeni_api_connection_page');
-    add_submenu_page('manajeni-dashboard', 'Test données', '🧪 Test données', 'manage_options', 'manajeni-test-data', 'manajeni_test_data_page');
+    add_submenu_page('manajeni-dashboard', 'Synchronisation', '🔄 Synchronisation', 'manage_options', 'manajeni-test-data', 'manajeni_test_data_page');
     add_submenu_page('manajeni-dashboard', 'Paramètres', '⚙️ Paramètres', 'manage_options', 'manajeni-settings', 'manajeni_settings_page');
     
     // Pages sans vérification de session
@@ -323,3 +413,7 @@ add_action('shutdown', function() {
         ob_end_flush();
     }
 });
+
+add_action('plugins_loaded', function() {
+    manajeni_connector_get_woocommerce_sync()->bootstrap();
+}, 20);

@@ -152,5 +152,21 @@ class Manajeni_Activator {
         if (!get_option('manajeni_api_email')) {
             add_option('manajeni_api_email', '');
         }
+
+        if (!get_option('manajeni_sync_logs')) {
+            add_option('manajeni_sync_logs', []);
+        }
+
+        if (!get_option('manajeni_sync_mappings')) {
+            add_option('manajeni_sync_mappings', []);
+        }
+
+        if (!get_option('manajeni_sync_retry_queue')) {
+            add_option('manajeni_sync_retry_queue', []);
+        }
+
+        if (!get_option('manajeni_webhook_secret')) {
+            add_option('manajeni_webhook_secret', wp_generate_password(32, false, false));
+        }
     }
 }

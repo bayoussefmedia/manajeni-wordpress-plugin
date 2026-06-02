@@ -37,7 +37,8 @@ if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonc
         'manajeni_user_session', 'manajeni_api_key_crypted', 'manajeni_api_key_masked',
         'manajeni_api_secret_crypted', 'manajeni_api_secret_masked', 'manajeni_api_email',
         'manajeni_last_connection', 'manajeni_last_activity',
-        'manajeni_capabilities_cache', 'manajeni_app_access_cache', 'manajeni_sync_mappings'
+        'manajeni_capabilities_cache', 'manajeni_app_access_cache', 'manajeni_sync_mappings',
+        'manajeni_sync_logs', 'manajeni_sync_retry_queue', 'manajeni_webhook_secret'
     ];
     foreach($options_to_delete as $opt) delete_option($opt);
     $xml_handler->clear_api_key_in_xml(true);

@@ -60,6 +60,7 @@ class Manajeni_Fake_API_Client {
             'projets' => [],
             'taches' => [],
             'catalogue' => [],
+            'orders' => [],
             'fournisseurs' => [],
             'rendez_vous' => [],
         ];
@@ -112,6 +113,9 @@ class Manajeni_Fake_API_Client {
     public function create_devis($data) { return ['success' => true, 'id' => $this->save_item('devis', $data)]; }
     public function update_devis($data) { return ['success' => true, 'id' => $this->save_item('devis', $data)]; }
     public function delete_devis($id) { return ['success' => $this->delete_item('devis', $id)]; }
+    public function get_orders() { return $this->get_collection('orders'); }
+    public function create_order($data) { return ['success' => true, 'data' => ['id' => $this->save_item('orders', $data)]]; }
+    public function update_order($data) { return ['success' => true, 'data' => ['id' => $this->save_item('orders', $data)]]; }
 
     public function get_factures() { return $this->get_collection('factures'); }
     public function create_facture($data) { return ['success' => true, 'id' => $this->save_item('factures', $data)]; }

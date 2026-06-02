@@ -90,6 +90,9 @@ class Manajeni_Session {
         $this->db->disconnect();
         $this->xml_handler->clear_api_key_in_xml(false);
         $this->clear_session();
+        delete_option('manajeni_sync_logs');
+        delete_option('manajeni_sync_retry_queue');
+        delete_option('manajeni_webhook_secret');
         if (class_exists('Manajeni_Apps_Access')) {
             Manajeni_Apps_Access::clear_cache();
         }

@@ -118,6 +118,10 @@ class Manajeni_API_Client {
         return $this->request('POST', $this->get_endpoint('orders'), $data);
     }
 
+    public function update_order($data) {
+        return $this->update_resource($this->get_endpoint('orders'), $data);
+    }
+
     public function get_appointments() {
         return $this->extract_collection($this->request('GET', $this->get_endpoint('appointments')), 'appointments');
     }
