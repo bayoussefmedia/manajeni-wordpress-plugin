@@ -69,6 +69,9 @@ class Manajeni_Session {
         $result = $this->db->save_connection($api_key, $api_secret, $api_email, $connection_date);
         
         if ($result) {
+            if (class_exists('Manajeni_Apps_Access')) {
+                Manajeni_Apps_Access::clear_cache();
+            }
             $this->xml_handler->declare_url($api_url);
             $this->xml_handler->update_api_key_in_xml($api_key, $connection_date);
             update_option('manajeni_url', esc_url_raw($api_url), false);
@@ -87,6 +90,9 @@ class Manajeni_Session {
         $this->db->disconnect();
         $this->xml_handler->clear_api_key_in_xml(false);
         $this->clear_session();
+        if (class_exists('Manajeni_Apps_Access')) {
+            Manajeni_Apps_Access::clear_cache();
+        }
         manajeni_connector_add_log('session_logout', 'success', 'Connexion API retiree');
     }
     

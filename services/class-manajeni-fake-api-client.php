@@ -153,6 +153,55 @@ class Manajeni_Fake_API_Client {
     public function create_rendez_vous($data) { return ['success' => true, 'id' => $this->save_item('rendez_vous', $data)]; }
     public function update_rendez_vous($data) { return ['success' => true, 'id' => $this->save_item('rendez_vous', $data)]; }
     public function delete_rendez_vous($id) { return ['success' => $this->delete_item('rendez_vous', $id)]; }
+    public function get_capabilities() {
+        return [
+            'success' => true,
+            'code' => 200,
+            'message' => 'Capabilities mock chargees.',
+            'data' => [
+                'resources' => [
+                    'clients' => ['clients:read'],
+                    'catalogue' => ['catalogue:read'],
+                    'quotes' => ['quotes:read'],
+                    'invoices' => ['invoices:read'],
+                    'payments' => ['payments:read'],
+                    'projects' => ['projects:read'],
+                    'tasks' => ['tasks:read'],
+                    'appointments' => ['appointments:read'],
+                    'reports' => ['reports:read'],
+                    'expenses' => ['expenses:read'],
+                    'suppliers' => ['suppliers:read'],
+                ],
+                'capabilities' => [
+                    'clients:read',
+                    'catalogue:read',
+                    'quotes:read',
+                    'invoices:read',
+                    'payments:read',
+                    'projects:read',
+                    'tasks:read',
+                    'appointments:read',
+                    'reports:read',
+                    'expenses:read',
+                    'suppliers:read',
+                ],
+                'resource_capabilities' => [
+                    'clients' => ['clients:read'],
+                    'catalogue' => ['catalogue:read'],
+                    'quotes' => ['quotes:read'],
+                    'invoices' => ['invoices:read'],
+                    'payments' => ['payments:read'],
+                    'projects' => ['projects:read'],
+                    'tasks' => ['tasks:read'],
+                    'appointments' => ['appointments:read'],
+                    'reports' => ['reports:read'],
+                    'expenses' => ['expenses:read'],
+                    'suppliers' => ['suppliers:read'],
+                ],
+                'raw' => [],
+            ],
+        ];
+    }
     public function get_rapports() { 
         return [
             'chiffre_affaires' => [50000, 65000, 45000, 72000],

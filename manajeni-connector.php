@@ -75,6 +75,19 @@ function manajeni_connector_get_api_client($api_url = '', $api_key = '') {
     return new Manajeni_API_Client($api_url, $api_key);
 }
 
+/**
+ * Retourne le service central de gestion des acces applications.
+ *
+ * @return Manajeni_Apps_Access
+ */
+function manajeni_connector_get_apps_access() {
+    if (!class_exists('Manajeni_Apps_Access')) {
+        require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-apps-access.php';
+    }
+
+    return new Manajeni_Apps_Access();
+}
+
 // Chargement automatique des classes
 spl_autoload_register(function($class) {
     $prefix = 'Manajeni_';
@@ -167,11 +180,24 @@ add_action('admin_menu', function() {
             'manage_options',
             'manajeni-' . $app,
             function() use ($app) {
+                if (!current_user_can('manage_options')) {
+                    wp_die('Accès non autorisé.');
+                }
+
                 if (!class_exists('Manajeni_Session')) {
                     wp_die('Erreur système');
                 }
+
                 $session = new Manajeni_Session();
-                if (!$session->check_session()) return;
+                if (!$session->check_session()) {
+                    return;
+                }
+
+                $apps_access = manajeni_connector_get_apps_access();
+                if (!$apps_access->user_can_access_app($app)) {
+                    $apps_access->render_unauthorized_notice($app);
+                    return;
+                }
                 
                 // STRATÉGIE MVC: Vérifier si un contrôleur existe pour cette app
                 // Format: Manajeni_Clients_Controller

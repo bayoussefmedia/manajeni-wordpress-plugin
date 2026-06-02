@@ -29,11 +29,15 @@ if (isset($_POST['clear_logs']) && check_admin_referer('manajeni_settings_nonce'
 }
 
 if (isset($_POST['reset_plugin']) && check_admin_referer('manajeni_settings_nonce')) {
+    if (class_exists('Manajeni_Apps_Access')) {
+        Manajeni_Apps_Access::clear_cache();
+    }
     $options_to_delete = [
         'manajeni_url', 'manajeni_connector_logs', 'manajeni_connected',
         'manajeni_user_session', 'manajeni_api_key_crypted', 'manajeni_api_key_masked',
         'manajeni_api_secret_crypted', 'manajeni_api_secret_masked', 'manajeni_api_email',
-        'manajeni_last_connection', 'manajeni_last_activity'
+        'manajeni_last_connection', 'manajeni_last_activity',
+        'manajeni_capabilities_cache', 'manajeni_app_access_cache', 'manajeni_sync_mappings'
     ];
     foreach($options_to_delete as $opt) delete_option($opt);
     $xml_handler->clear_api_key_in_xml(true);

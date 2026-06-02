@@ -39,6 +39,7 @@ class Manajeni_API_Client {
         'catalogue' => '/catalogue',
         'orders' => '/orders',
         'appointments' => '/appointments',
+        'capabilities' => '/capabilities',
     ];
 
     /**
@@ -119,6 +120,33 @@ class Manajeni_API_Client {
 
     public function get_appointments() {
         return $this->extract_collection($this->request('GET', $this->get_endpoint('appointments')), 'appointments');
+    }
+
+    public function get_capabilities() {
+        $response = $this->request('GET', $this->get_endpoint('capabilities'));
+
+        if (!$response['success']) {
+            return [
+                'success' => false,
+                'code' => $response['code'],
+                'message' => $response['message'],
+                'data' => [
+                    'resources' => [],
+                    'capabilities' => [],
+                    'resource_capabilities' => [],
+                    'raw' => $response['data'],
+                ],
+            ];
+        }
+
+        $normalized = $this->normalize_capabilities_payload($response['data']);
+
+        return [
+            'success' => true,
+            'code' => $response['code'],
+            'message' => __('Capabilities API recuperees.', 'manajeni-connector'),
+            'data' => $normalized,
+        ];
     }
 
     public function create_appointment($data) {
@@ -462,6 +490,77 @@ class Manajeni_API_Client {
     }
 
     /**
+     * Normalise la reponse capabilities pour un usage plugin simple.
+     *
+     * @param array $data Donnees brutes API.
+     * @return array
+     */
+    private function normalize_capabilities_payload($data) {
+        $resources = [];
+
+        if (isset($data['resources']) && is_array($data['resources'])) {
+            $resources = $data['resources'];
+        } elseif (isset($data['data']['resources']) && is_array($data['data']['resources'])) {
+            $resources = $data['data']['resources'];
+        }
+
+        $flat_capabilities = [];
+        $resource_capabilities = [];
+
+        foreach ($resources as $resource_key => $resource_value) {
+            $resource_name = is_string($resource_key) ? sanitize_key($resource_key) : '';
+            $scopes = [];
+
+            if (is_array($resource_value)) {
+                if ($this->is_list_array($resource_value)) {
+                    $scopes = $resource_value;
+                } elseif (isset($resource_value['capabilities']) && is_array($resource_value['capabilities'])) {
+                    $scopes = $resource_value['capabilities'];
+                } elseif (isset($resource_value['scopes']) && is_array($resource_value['scopes'])) {
+                    $scopes = $resource_value['scopes'];
+                } elseif (!empty($resource_name)) {
+                    foreach ($resource_value as $action => $enabled) {
+                        if ($enabled) {
+                            $scopes[] = $resource_name . ':' . sanitize_key($action);
+                        }
+                    }
+                }
+            }
+
+            $scopes = $this->normalize_string_list($scopes);
+
+            if (!empty($resource_name)) {
+                $resource_capabilities[$resource_name] = $scopes;
+            }
+
+            $flat_capabilities = array_merge($flat_capabilities, $scopes);
+        }
+
+        $top_level_capabilities = [];
+        if (isset($data['capabilities']) && is_array($data['capabilities'])) {
+            $top_level_capabilities = $data['capabilities'];
+        } elseif (isset($data['data']['capabilities']) && is_array($data['data']['capabilities'])) {
+            $top_level_capabilities = $data['data']['capabilities'];
+        } elseif (isset($data['scopes']) && is_array($data['scopes'])) {
+            $top_level_capabilities = $data['scopes'];
+        } elseif (isset($data['data']['scopes']) && is_array($data['data']['scopes'])) {
+            $top_level_capabilities = $data['data']['scopes'];
+        }
+
+        $flat_capabilities = array_values(array_unique(array_merge(
+            $flat_capabilities,
+            $this->normalize_string_list($top_level_capabilities)
+        )));
+
+        return [
+            'resources' => $resources,
+            'capabilities' => $flat_capabilities,
+            'resource_capabilities' => $resource_capabilities,
+            'raw' => $data,
+        ];
+    }
+
+    /**
      * Met a jour une ressource par id.
      *
      * @param string $endpoint Endpoint.
@@ -562,5 +661,32 @@ class Manajeni_API_Client {
         }
 
         return array_keys($data) === range(0, count($data) - 1);
+    }
+
+    /**
+     * Nettoie une liste de scopes/capabilities.
+     *
+     * @param array $items Liste brute.
+     * @return array
+     */
+    private function normalize_string_list($items) {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($items as $item) {
+            if (!is_string($item)) {
+                continue;
+            }
+
+            $value = sanitize_text_field($item);
+            if ('' !== $value) {
+                $normalized[] = $value;
+            }
+        }
+
+        return array_values(array_unique($normalized));
     }
 }
