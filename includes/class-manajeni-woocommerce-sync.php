@@ -848,8 +848,19 @@ class Manajeni_WooCommerce_Sync {
      */
     private function build_product_payload($product) {
         $sku = trim((string) $product->get_sku());
-        $regular_price = '' !== (string) $product->get_regular_price() ? (float) $product->get_regular_price() : (float) $product->get_price();
+        $regular_price_raw = (string) $product->get_regular_price();
+        $price_raw = (string) $product->get_price();
+        $unit_price_ht = '' !== $regular_price_raw ? (float) $regular_price_raw : ('' !== $price_raw ? (float) $price_raw : 0.0);
         $tax_class = $product->get_tax_class();
+        $tax_rate = (float) $this->resolve_tax_rate_label($tax_class);
+        $stock_quantity = null !== $product->get_stock_quantity() ? (int) $product->get_stock_quantity() : 0;
+        $image_url = '';
+        $image_id = $product->get_image_id();
+
+        if ($image_id) {
+            $image_url = wp_get_attachment_url($image_id);
+            $image_url = $image_url ? esc_url_raw($image_url) : '';
+        }
 
         return [
             'reference' => $sku,
@@ -858,11 +869,16 @@ class Manajeni_WooCommerce_Sync {
             'description' => wp_strip_all_tags((string) $product->get_description()),
             'category' => $this->extract_product_category_name($product),
             'type' => 'service' === $product->get_type() ? 'service' : 'product',
-            'price' => $regular_price,
-            'tax' => $this->resolve_tax_rate_label($tax_class),
-            'stock' => (int) $product->get_stock_quantity(),
-            'stock_quantity' => (int) $product->get_stock_quantity(),
             'status' => 'publish' === $product->get_status() ? 'active' : 'inactive',
+            'unit_price_ht' => $unit_price_ht,
+            'tax_rate' => $tax_rate,
+            'stock_tracked' => (bool) $product->managing_stock(),
+            'stock_quantity' => $stock_quantity,
+            'stock_status' => $product->is_in_stock() ? 'in_stock' : 'out_of_stock',
+            'image_url' => $image_url,
+            'price' => $unit_price_ht,
+            'tax' => $tax_rate,
+            'stock' => $stock_quantity,
             'source' => 'woocommerce',
             'sync_status' => 'synchronise',
             'last_sync_at' => current_time('mysql'),
