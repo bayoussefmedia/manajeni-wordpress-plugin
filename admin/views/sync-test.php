@@ -129,15 +129,19 @@ $retry_count = $sync->get_retry_queue_count();
         </div>
 
         <div style="margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-total-wc">0</div><div class="mj-stat-label">total WC</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-total-manajeni">0</div><div class="mj-stat-label">total Manajeni</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-processed">0</div><div class="mj-stat-label">produits traités</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-created-manajeni">0</div><div class="mj-stat-label">créés dans Manajeni</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-created-wc">0</div><div class="mj-stat-label">créés dans WooCommerce</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-updated-total">0</div><div class="mj-stat-label">mis à jour</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-linked">0</div><div class="mj-stat-label">liés</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-skipped">0</div><div class="mj-stat-label">ignorés</div></div></div>
             <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-errors-count">0</div><div class="mj-stat-label">erreurs</div></div></div>
         </div>
 
         <div id="mj-reconcile-errors" style="display:none; margin-top:16px; padding:14px 16px; background:var(--mj-error-soft); color:var(--mj-error); border-radius:12px;"></div>
+        <div id="mj-reconcile-skipped-items" style="display:none; margin-top:16px; padding:14px 16px; background:var(--mj-warning-soft); color:var(--mj-warning); border-radius:12px;"></div>
     </div>
 
     <div class="mj-table-wrapper" style="margin-top:40px;">
@@ -201,30 +205,42 @@ document.addEventListener('DOMContentLoaded', function () {
     var statusNode = document.getElementById('mj-reconcile-status');
     var errorsNode = document.getElementById('mj-reconcile-errors');
     var metrics = {
+        totalWC: document.getElementById('mj-reconcile-total-wc'),
+        totalManajeni: document.getElementById('mj-reconcile-total-manajeni'),
         processed: document.getElementById('mj-reconcile-processed'),
         createdManajeni: document.getElementById('mj-reconcile-created-manajeni'),
         createdWoo: document.getElementById('mj-reconcile-created-wc'),
         updatedTotal: document.getElementById('mj-reconcile-updated-total'),
         linked: document.getElementById('mj-reconcile-linked'),
+        skipped: document.getElementById('mj-reconcile-skipped'),
         errorsCount: document.getElementById('mj-reconcile-errors-count')
     };
+    var skippedNode = document.getElementById('mj-reconcile-skipped-items');
 
     var totals = {
+        total_wc_products: 0,
+        total_manajeni_items: 0,
         processed: 0,
         created_in_manajeni: 0,
         created_in_woocommerce: 0,
         updated_in_manajeni: 0,
         updated_in_woocommerce: 0,
         linked: 0,
-        errors: []
+        skipped: 0,
+        errors: [],
+        skipped_items: [],
+        error_items: []
     };
 
     function render() {
+        metrics.totalWC.textContent = String(totals.total_wc_products);
+        metrics.totalManajeni.textContent = String(totals.total_manajeni_items);
         metrics.processed.textContent = String(totals.processed);
         metrics.createdManajeni.textContent = String(totals.created_in_manajeni);
         metrics.createdWoo.textContent = String(totals.created_in_woocommerce);
         metrics.updatedTotal.textContent = String(totals.updated_in_manajeni + totals.updated_in_woocommerce);
         metrics.linked.textContent = String(totals.linked);
+        metrics.skipped.textContent = String(totals.skipped);
         metrics.errorsCount.textContent = String(totals.errors.length);
 
         if (totals.errors.length) {
@@ -234,17 +250,36 @@ document.addEventListener('DOMContentLoaded', function () {
             errorsNode.style.display = 'none';
             errorsNode.textContent = '';
         }
+
+        if (totals.skipped_items.length) {
+            skippedNode.style.display = 'block';
+            skippedNode.textContent = 'Produits ignorés sans SKU: ' + totals.skipped_items.slice(0, 10).map(function (item) {
+                return '#' + String(item.product_id || 0) + ' ' + String(item.product_name || '');
+            }).join(' | ');
+        } else {
+            skippedNode.style.display = 'none';
+            skippedNode.textContent = '';
+        }
     }
 
     function mergeBatch(data) {
+        totals.total_wc_products = Number(data.total_wc_products || totals.total_wc_products || 0);
+        totals.total_manajeni_items = Number(data.total_manajeni_items || totals.total_manajeni_items || 0);
         totals.processed += Number(data.processed || 0);
         totals.created_in_manajeni += Number(data.created_in_manajeni || 0);
         totals.created_in_woocommerce += Number(data.created_in_woocommerce || 0);
         totals.updated_in_manajeni += Number(data.updated_in_manajeni || 0);
         totals.updated_in_woocommerce += Number(data.updated_in_woocommerce || 0);
         totals.linked += Number(data.linked || 0);
+        totals.skipped += Number(data.skipped || 0);
         if (Array.isArray(data.errors) && data.errors.length) {
             totals.errors = totals.errors.concat(data.errors);
+        }
+        if (Array.isArray(data.skipped_items) && data.skipped_items.length) {
+            totals.skipped_items = totals.skipped_items.concat(data.skipped_items);
+        }
+        if (Array.isArray(data.error_items) && data.error_items.length) {
+            totals.error_items = totals.error_items.concat(data.error_items);
         }
         render();
     }
@@ -270,14 +305,14 @@ document.addEventListener('DOMContentLoaded', function () {
             var data = payload && payload.data ? payload.data : {};
             mergeBatch(data);
 
-            if (!payload.success && Array.isArray(data.errors) && data.errors.length) {
-                setStatus('Réconciliation terminée avec erreurs.');
-                return;
-            }
-
             if (data.has_more) {
                 setStatus('Traitement en cours... ' + totals.processed + ' produits traités.');
                 return runBatch(Number(data.offset || 0));
+            }
+
+            if ((Array.isArray(data.errors) && data.errors.length) || totals.errors.length) {
+                setStatus('Réconciliation terminée avec erreurs.');
+                return;
             }
 
             setStatus('Réconciliation terminée. ' + totals.processed + ' produits traités.');
@@ -291,13 +326,18 @@ document.addEventListener('DOMContentLoaded', function () {
     button.addEventListener('click', function () {
         button.disabled = true;
         totals = {
+            total_wc_products: 0,
+            total_manajeni_items: 0,
             processed: 0,
             created_in_manajeni: 0,
             created_in_woocommerce: 0,
             updated_in_manajeni: 0,
             updated_in_woocommerce: 0,
             linked: 0,
-            errors: []
+            skipped: 0,
+            errors: [],
+            skipped_items: [],
+            error_items: []
         };
         render();
         setStatus('Démarrage de la réconciliation...');

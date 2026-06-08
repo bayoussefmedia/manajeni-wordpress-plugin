@@ -262,6 +262,8 @@ class Manajeni_WooCommerce_Sync {
 
         $result = [
             'success' => true,
+            'total_wc_products' => 0,
+            'total_manajeni_items' => 0,
             'processed' => 0,
             'offset' => $offset,
             'has_more' => false,
@@ -272,6 +274,8 @@ class Manajeni_WooCommerce_Sync {
             'linked' => 0,
             'skipped' => 0,
             'errors' => [],
+            'skipped_items' => [],
+            'error_items' => [],
         ];
 
         if (!manajeni_connector_is_woocommerce_active()) {
@@ -286,13 +290,26 @@ class Manajeni_WooCommerce_Sync {
             return $result;
         }
 
-        $wc_index = $this->build_woocommerce_index();
+        $wc_data = $this->build_woocommerce_index();
+        $wc_index = $wc_data['index'];
         $manajeni_index = $this->build_manajeni_index();
+        $result['total_wc_products'] = (int) $wc_data['total_wc_products'];
+        $result['total_manajeni_items'] = count($manajeni_index);
+        $result['skipped'] += count($wc_data['skipped_items']);
+        $result['skipped_items'] = $wc_data['skipped_items'];
         $skus = array_values(array_unique(array_merge(array_keys($wc_index), array_keys($manajeni_index))));
         sort($skus, SORT_NATURAL | SORT_FLAG_CASE);
 
         if (0 === $offset) {
-            $this->logger->log('info', 'reconciliation_started', 'Reconciliation catalogue Manajeni <-> WooCommerce demarree.', ['total_candidates' => count($skus), 'batch' => $batch]);
+            $this->logger->log('info', 'reconciliation_started', 'Reconciliation catalogue Manajeni <-> WooCommerce demarree.', [
+                'total_wc_products_loaded' => $wc_data['total_wc_products'],
+                'total_manajeni_catalogue_items_loaded' => count($manajeni_index),
+                'total_with_sku' => count($wc_index),
+                'total_without_sku' => count($wc_data['skipped_items']),
+                'batch_offset' => $offset,
+                'batch_limit' => $batch,
+                'total_candidates' => count($skus),
+            ]);
         }
 
         $slice = array_slice($skus, $offset, $batch);
@@ -354,6 +371,10 @@ class Manajeni_WooCommerce_Sync {
             } catch (Exception $exception) {
                 $result['success'] = false;
                 $result['errors'][] = sprintf('%s: %s', $sku, $exception->getMessage());
+                $result['error_items'][] = [
+                    'sku' => $sku,
+                    'message' => $exception->getMessage(),
+                ];
                 $this->logger->log('error', 'product_sync_failed', 'Echec reconciliation produit.', ['sku' => $sku, 'message' => $exception->getMessage()]);
             }
         }
@@ -369,6 +390,8 @@ class Manajeni_WooCommerce_Sync {
                 'linked' => $result['linked'],
                 'skipped' => $result['skipped'],
                 'errors' => count($result['errors']),
+                'skipped_items' => count($result['skipped_items']),
+                'error_items' => count($result['error_items']),
             ]);
         }
 
@@ -515,6 +538,8 @@ class Manajeni_WooCommerce_Sync {
                 'success' => false,
                 'reason' => 'sku_empty',
                 'action' => 'skipped',
+                'product_id' => $product_id,
+                'name' => sanitize_text_field($product->get_name()),
             ];
         }
 
@@ -552,12 +577,25 @@ class Manajeni_WooCommerce_Sync {
         }
 
         if (!$this->is_success_response($response)) {
+            $api_errors = [];
+            if (isset($response['data']['errors']) && is_array($response['data']['errors'])) {
+                $api_errors = $response['data']['errors'];
+            } elseif (isset($response['data']['data']['errors']) && is_array($response['data']['data']['errors'])) {
+                $api_errors = $response['data']['data']['errors'];
+            }
+
             $this->logger->log('error', 'product_sync_failed', 'Echec synchronisation produit WooCommerce -> Manajeni.', ['product_id' => $product_id, 'sku' => $sku, 'response' => $response]);
             return [
                 'success' => false,
                 'reason' => 'api_error',
                 'action' => $action,
                 'response' => $response,
+                'sku' => $sku,
+                'product_id' => $product_id,
+                'name' => sanitize_text_field($product->get_name()),
+                'api_code' => isset($response['code']) ? (int) $response['code'] : 0,
+                'api_message' => isset($response['message']) ? sanitize_text_field((string) $response['message']) : '',
+                'api_errors' => $api_errors,
             ];
         }
 
@@ -955,20 +993,29 @@ class Manajeni_WooCommerce_Sync {
      */
     private function build_woocommerce_index() {
         $index = [];
-        $product_ids = wc_get_products([
+        $skipped_items = [];
+        $products = wc_get_products([
             'limit' => -1,
-            'status' => ['publish', 'draft'],
-            'return' => 'ids',
+            'status' => ['publish', 'draft', 'pending', 'private'],
+            'type' => ['simple', 'variable', 'variation'],
+            'return' => 'objects',
         ]);
 
-        foreach ($product_ids as $product_id) {
-            $product = wc_get_product($product_id);
+        foreach ($products as $product) {
             if (!$product) {
                 continue;
             }
 
+            $product_id = (int) $product->get_id();
             $sku = trim((string) $product->get_sku());
             if ('' === $sku) {
+                $item = [
+                    'product_id' => $product_id,
+                    'product_name' => sanitize_text_field($product->get_name()),
+                    'reason' => 'sku_empty',
+                ];
+                $skipped_items[] = $item;
+                $this->logger->log('warning', 'product_sync_skipped_sku_empty', 'Produit WooCommerce ignore pendant reconciliation: SKU vide.', $item);
                 continue;
             }
 
@@ -985,7 +1032,11 @@ class Manajeni_WooCommerce_Sync {
             ];
         }
 
-        return $index;
+        return [
+            'index' => $index,
+            'total_wc_products' => count($products),
+            'skipped_items' => $skipped_items,
+        ];
     }
 
     /**
@@ -1537,9 +1588,38 @@ class Manajeni_WooCommerce_Sync {
         if (empty($sync['success'])) {
             if (!empty($sync['reason']) && !in_array($sync['reason'], ['locked', 'sku_empty'], true)) {
                 $result['success'] = false;
-                $result['errors'][] = !empty($sync['sku']) ? $sync['sku'] . ': sync_failed' : 'sync_failed';
+                $api_error_text = '';
+                if (!empty($sync['api_errors']) && is_array($sync['api_errors'])) {
+                    $api_error_text = wp_json_encode($sync['api_errors']);
+                }
+
+                $message = sprintf(
+                    'product_id=%s sku=%s name=%s api_code=%s api_message=%s api_errors=%s',
+                    isset($sync['product_id']) ? (string) $sync['product_id'] : '',
+                    isset($sync['sku']) ? (string) $sync['sku'] : '',
+                    isset($sync['name']) ? (string) $sync['name'] : '',
+                    isset($sync['api_code']) ? (string) $sync['api_code'] : '',
+                    isset($sync['api_message']) ? (string) $sync['api_message'] : '',
+                    $api_error_text
+                );
+                $result['errors'][] = $message;
+                $result['error_items'][] = [
+                    'product_id' => isset($sync['product_id']) ? $sync['product_id'] : 0,
+                    'sku' => isset($sync['sku']) ? $sync['sku'] : '',
+                    'name' => isset($sync['name']) ? $sync['name'] : '',
+                    'api_code' => isset($sync['api_code']) ? $sync['api_code'] : 0,
+                    'api_message' => isset($sync['api_message']) ? $sync['api_message'] : '',
+                    'api_errors' => isset($sync['api_errors']) ? $sync['api_errors'] : [],
+                ];
             } else {
                 $result['skipped']++;
+                if ('sku_empty' === (isset($sync['reason']) ? $sync['reason'] : '')) {
+                    $result['skipped_items'][] = [
+                        'product_id' => isset($sync['product_id']) ? $sync['product_id'] : 0,
+                        'product_name' => isset($sync['name']) ? $sync['name'] : '',
+                        'reason' => 'sku_empty',
+                    ];
+                }
             }
             return;
         }
