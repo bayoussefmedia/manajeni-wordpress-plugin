@@ -86,6 +86,10 @@ class Manajeni_API_Client {
         return $this->request('POST', $this->get_endpoint('clients'), $data);
     }
 
+    public function upsert_client($data) {
+        return $this->request('POST', $this->get_endpoint('clients') . '/upsert', $data);
+    }
+
     public function update_client($data) {
         return $this->update_resource($this->get_endpoint('clients'), $data);
     }
@@ -106,6 +110,15 @@ class Manajeni_API_Client {
         return $this->update_resource($this->get_endpoint('catalogue'), $data);
     }
 
+    public function update_catalogue_stock_by_reference($reference, $stock_quantity, $reason = '') {
+        $reference = rawurlencode(sanitize_text_field((string) $reference));
+
+        return $this->request('PATCH', $this->get_endpoint('catalogue') . '/by-reference/' . $reference . '/stock', [
+            'stock_quantity' => (int) $stock_quantity,
+            'reason' => sanitize_text_field((string) $reason),
+        ]);
+    }
+
     public function delete_catalogue_item($id) {
         return $this->delete_resource($this->get_endpoint('catalogue'), $id);
     }
@@ -116,6 +129,10 @@ class Manajeni_API_Client {
 
     public function create_order($data) {
         return $this->request('POST', $this->get_endpoint('orders'), $data);
+    }
+
+    public function create_order_from_woocommerce($data) {
+        return $this->request('POST', $this->get_endpoint('orders') . '/from-woocommerce', $data);
     }
 
     public function update_order($data) {

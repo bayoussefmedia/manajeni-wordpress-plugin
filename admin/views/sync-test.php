@@ -15,14 +15,24 @@ $logger = manajeni_connector_get_sync_logger();
 $mapper = manajeni_connector_get_sync_mapper();
 $sync = manajeni_connector_get_woocommerce_sync();
 $db = new Manajeni_DB();
+$woocommerce_active = manajeni_connector_is_woocommerce_active();
+$api_connected = $db->has_api_key();
+$import_result = null;
+
+if (
+    $woocommerce_active
+    && $api_connected
+    && isset($_POST['import_manajeni_catalogue'])
+    && check_admin_referer('manajeni_sync_test_actions', 'mj_sync_nonce')
+) {
+    $import_result = $sync->import_catalogue_from_manajeni();
+}
 
 $logs = $logger->get_logs(120);
 $stats = $logger->get_stats();
 $mapping_counts = $mapper->get_counts();
-$woocommerce_active = manajeni_connector_is_woocommerce_active();
 $webhook_base = rest_url('manajeni/v1/webhook/');
 $retry_count = $sync->get_retry_queue_count();
-$api_connected = $db->has_api_key();
 ?>
 
 <div class="mj-app-container">
@@ -45,6 +55,27 @@ $api_connected = $db->has_api_key();
     <?php if (!$api_connected) : ?>
         <div class="notice mj-notice notice-warning">
             <p><strong><?php echo esc_html__('Aucune clé API connectée. Les hooks sortants vers Manajeni sont désactivés.', 'manajeni-connector'); ?></strong></p>
+        </div>
+    <?php endif; ?>
+
+    <?php if (is_array($import_result)) : ?>
+        <div class="notice mj-notice <?php echo $import_result['errors'] > 0 ? 'notice-warning' : 'notice-success'; ?>">
+            <p>
+                <strong><?php echo esc_html__('Import Catalogue Manajeni → WooCommerce terminé.', 'manajeni-connector'); ?></strong>
+                <?php
+                echo ' ';
+                echo esc_html(sprintf(
+                    'created: %d | updated: %d | skipped: %d | errors: %d',
+                    (int) $import_result['created'],
+                    (int) $import_result['updated'],
+                    (int) $import_result['skipped'],
+                    (int) $import_result['errors']
+                ));
+                ?>
+            </p>
+            <?php if (!empty($import_result['messages'])) : ?>
+                <p style="margin-top:8px; color:var(--mj-slate-500);"><?php echo esc_html(implode(' | ', array_slice($import_result['messages'], 0, 5))); ?></p>
+            <?php endif; ?>
         </div>
     <?php endif; ?>
 
@@ -109,6 +140,30 @@ $api_connected = $db->has_api_key();
                 <div style="display:flex; justify-content:space-between;"><span>Infos</span><strong><?php echo esc_html($stats['info']); ?></strong></div>
             </div>
         </div>
+    </div>
+
+    <div class="mj-table-wrapper" style="margin-top:24px; padding:24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;">
+            <div>
+                <h3 style="margin:0;">Import Catalogue</h3>
+                <p style="margin:8px 0 0; color:var(--mj-slate-500);">Créer ou mettre à jour les produits WooCommerce depuis Manajeni, sans jamais supprimer les produits existants.</p>
+            </div>
+            <form method="post">
+                <?php wp_nonce_field('manajeni_sync_test_actions', 'mj_sync_nonce'); ?>
+                <button type="submit" name="import_manajeni_catalogue" class="mj-btn-primary" <?php disabled(!$woocommerce_active || !$api_connected); ?>>
+                    Importer Catalogue Manajeni vers WooCommerce
+                </button>
+            </form>
+        </div>
+
+        <?php if (is_array($import_result)) : ?>
+            <div style="margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
+                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['created']); ?></div><div class="mj-stat-label">created</div></div></div>
+                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['updated']); ?></div><div class="mj-stat-label">updated</div></div></div>
+                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['skipped']); ?></div><div class="mj-stat-label">skipped</div></div></div>
+                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['errors']); ?></div><div class="mj-stat-label">errors</div></div></div>
+            </div>
+        <?php endif; ?>
     </div>
 
     <div class="mj-table-wrapper" style="margin-top:40px;">

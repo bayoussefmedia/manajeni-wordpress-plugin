@@ -174,40 +174,46 @@ class Manajeni_WooCommerce_Sync {
         }
 
         $mapping = $this->mapper->find_product_mapping(['wc_product_id' => $product_id]);
-        if (empty($mapping['manajeni_product_id'])) {
-            $remote_item = $this->find_remote_catalogue_item_by_reference($sku);
-            if ($remote_item) {
-                $mapping = [
-                    'wc_product_id' => $product_id,
-                    'manajeni_product_id' => isset($remote_item['id']) ? (int) $remote_item['id'] : 0,
-                    'sku' => $sku,
-                ];
+        $remote_item = $this->find_remote_catalogue_item_by_reference($sku);
+
+        if ($remote_item && empty($mapping['manajeni_product_id'])) {
+            $mapping = [
+                'wc_product_id' => $product_id,
+                'manajeni_product_id' => isset($remote_item['id']) ? (int) $remote_item['id'] : 0,
+                'sku' => $sku,
+            ];
+        }
+
+        if (method_exists($this->api_client, 'update_catalogue_stock_by_reference')) {
+            $response = $this->api_client->update_catalogue_stock_by_reference(
+                $sku,
+                (int) $product->get_stock_quantity(),
+                'woocommerce_stock_sync'
+            );
+        } else {
+            if (empty($mapping['manajeni_product_id'])) {
+                $this->handle_product_update($product_id);
+                $mapping = $this->mapper->find_product_mapping(['wc_product_id' => $product_id]);
             }
+
+            if (empty($mapping['manajeni_product_id'])) {
+                $this->logger->log('warning', 'stock_sync_skipped', 'Stock non synchronise: mapping Manajeni introuvable.', ['product_id' => $product_id, 'sku' => $sku]);
+                return;
+            }
+
+            $response = $this->api_client->update_catalogue_item([
+                'id' => (int) $mapping['manajeni_product_id'],
+                'reference' => $sku,
+                'sku' => $sku,
+                'stock' => (int) $product->get_stock_quantity(),
+                'stock_quantity' => (int) $product->get_stock_quantity(),
+                'status' => $product->is_in_stock() ? 'active' : 'inactive',
+                'source' => 'woocommerce',
+                'sync_status' => 'synchronise',
+                'last_sync_at' => current_time('mysql'),
+            ]);
         }
 
-        if (empty($mapping['manajeni_product_id'])) {
-            $this->handle_product_update($product_id);
-            $mapping = $this->mapper->find_product_mapping(['wc_product_id' => $product_id]);
-        }
-
-        if (empty($mapping['manajeni_product_id'])) {
-            $this->logger->log('warning', 'stock_sync_skipped', 'Stock non synchronise: mapping Manajeni introuvable.', ['product_id' => $product_id, 'sku' => $sku]);
-            return;
-        }
-
-        $payload = [
-            'id' => (int) $mapping['manajeni_product_id'],
-            'reference' => $sku,
-            'sku' => $sku,
-            'stock' => (int) $product->get_stock_quantity(),
-            'stock_quantity' => (int) $product->get_stock_quantity(),
-            'status' => $product->is_in_stock() ? 'active' : 'inactive',
-            'source' => 'woocommerce',
-            'sync_status' => 'synchronise',
-            'last_sync_at' => current_time('mysql'),
-        ];
-
-        $response = $this->api_client->update_catalogue_item($payload);
         if (!$this->is_success_response($response)) {
             $this->logger->log('error', 'stock_sync_failed', 'Echec synchronisation stock WooCommerce -> Manajeni.', ['product_id' => $product_id, 'sku' => $sku, 'response' => $response]);
             $this->schedule_retry('stock', ['product_id' => $product_id]);
@@ -216,11 +222,95 @@ class Manajeni_WooCommerce_Sync {
 
         $this->mapper->save_product_mapping([
             'wc_product_id' => $product_id,
-            'manajeni_product_id' => $mapping['manajeni_product_id'],
+            'manajeni_product_id' => !empty($mapping['manajeni_product_id']) ? $mapping['manajeni_product_id'] : (isset($remote_item['id']) ? (int) $remote_item['id'] : 0),
             'sku' => $sku,
         ]);
 
         $this->logger->log('info', 'stock_synced', 'Stock WooCommerce synchronise vers Manajeni.', ['product_id' => $product_id, 'sku' => $sku, 'stock' => (int) $product->get_stock_quantity()]);
+    }
+
+    /**
+     * Importe le catalogue Manajeni dans WooCommerce sans supprimer les produits existants.
+     *
+     * @return array
+     */
+    public function import_catalogue_from_manajeni() {
+        $results = [
+            'success' => false,
+            'created' => 0,
+            'updated' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+            'messages' => [],
+        ];
+
+        if (!manajeni_connector_is_woocommerce_active()) {
+            $results['errors']++;
+            $results['messages'][] = __('WooCommerce non installe.', 'manajeni-connector');
+            return $results;
+        }
+
+        if (!$this->can_call_api()) {
+            $results['errors']++;
+            $results['messages'][] = __('Connexion API Manajeni absente.', 'manajeni-connector');
+            return $results;
+        }
+
+        $catalogue = $this->api_client->get_catalogue();
+        if (!is_array($catalogue)) {
+            $results['errors']++;
+            $results['messages'][] = __('Catalogue Manajeni invalide.', 'manajeni-connector');
+            return $results;
+        }
+
+        foreach ($catalogue as $item) {
+            $reference = $this->extract_catalogue_reference($item);
+            if ('' === $reference) {
+                $results['skipped']++;
+                $results['messages'][] = __('Article ignore: reference manquante.', 'manajeni-connector');
+                $this->logger->log('warning', 'catalogue_import_skipped', 'Import catalogue ignore: reference manquante.', ['item' => $item]);
+                continue;
+            }
+
+            $product_id = wc_get_product_id_by_sku($reference);
+            $product = $product_id ? wc_get_product($product_id) : new WC_Product_Simple();
+            if (!$product) {
+                $results['errors']++;
+                $results['messages'][] = sprintf(__('Impossible de charger le produit WooCommerce pour %s.', 'manajeni-connector'), $reference);
+                $this->logger->log('error', 'catalogue_import_failed', 'Chargement produit WooCommerce impossible pendant import catalogue.', ['reference' => $reference]);
+                continue;
+            }
+
+            $is_new = !$product_id;
+
+            try {
+                $this->apply_catalogue_item_to_product($product, $item, $reference);
+                $product_id = $product->get_id();
+                $this->maybe_import_product_image($product_id, $item);
+
+                $this->mapper->save_product_mapping([
+                    'wc_product_id' => $product_id,
+                    'manajeni_product_id' => isset($item['id']) ? (int) $item['id'] : 0,
+                    'sku' => $reference,
+                ]);
+
+                if ($is_new) {
+                    $results['created']++;
+                    $this->logger->log('info', 'catalogue_import_created', 'Produit WooCommerce cree depuis le catalogue Manajeni.', ['product_id' => $product_id, 'sku' => $reference]);
+                } else {
+                    $results['updated']++;
+                    $this->logger->log('info', 'catalogue_import_updated', 'Produit WooCommerce mis a jour depuis le catalogue Manajeni.', ['product_id' => $product_id, 'sku' => $reference]);
+                }
+            } catch (Exception $exception) {
+                $results['errors']++;
+                $results['messages'][] = sprintf(__('Erreur import %s: %s', 'manajeni-connector'), $reference, $exception->getMessage());
+                $this->logger->log('error', 'catalogue_import_failed', 'Echec import catalogue Manajeni -> WooCommerce.', ['reference' => $reference, 'message' => $exception->getMessage()]);
+            }
+        }
+
+        $results['success'] = 0 === $results['errors'];
+
+        return $results;
     }
 
     /**
@@ -378,7 +468,11 @@ class Manajeni_WooCommerce_Sync {
             $response = $this->api_client->update_order($payload);
             $action = 'order_updated';
         } else {
-            $response = $this->api_client->create_order($payload);
+            if (method_exists($this->api_client, 'create_order_from_woocommerce')) {
+                $response = $this->api_client->create_order_from_woocommerce($payload);
+            } else {
+                $response = $this->api_client->create_order($payload);
+            }
             $action = 'order_created';
         }
 
@@ -447,7 +541,11 @@ class Manajeni_WooCommerce_Sync {
                 $payload['id'] = (int) $remote_client['id'];
                 $response = $this->api_client->update_client($payload);
             } else {
-                $response = $this->api_client->create_client($payload);
+                if (method_exists($this->api_client, 'upsert_client')) {
+                    $response = $this->api_client->upsert_client($payload);
+                } else {
+                    $response = $this->api_client->create_client($payload);
+                }
             }
         }
 
@@ -512,33 +610,194 @@ class Manajeni_WooCommerce_Sync {
 
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
-            $sku = $product ? $product->get_sku() : '';
+            $sku = $product ? trim((string) $product->get_sku()) : '';
+            $quantity = max(1, (int) $item->get_quantity());
+            $unit_price_ht = (float) $order->get_item_subtotal($item, false, true);
 
             $lines[] = [
-                'reference' => sanitize_text_field((string) $sku),
-                'description' => sanitize_text_field($item->get_name()),
-                'quantite' => (float) $item->get_quantity(),
-                'prix_unitaire' => (float) $order->get_item_subtotal($item, false, true),
-                'tva' => (float) $item->get_total_tax(),
-                'total_ht' => (float) $item->get_total(),
+                'sku' => sanitize_text_field($sku),
+                'reference' => sanitize_text_field($sku),
+                'name' => sanitize_text_field($item->get_name()),
+                'quantity' => $quantity,
+                'unit_price_ht' => $unit_price_ht,
+                'subtotal_ht' => (float) $item->get_total(),
+                'tax_total' => (float) $item->get_total_tax(),
             ];
         }
 
+        $remote_customer_id = isset($client_payload['id']) ? (int) $client_payload['id'] : 0;
+        $wc_customer_id = (int) $order->get_customer_id();
+
         return [
-            'reference' => sanitize_text_field((string) $order->get_order_number()),
-            'wc_order_id' => $order->get_id(),
-            'source' => 'woocommerce',
-            'date' => $order->get_date_created() ? $order->get_date_created()->date('Y-m-d H:i:s') : current_time('mysql'),
-            'statut' => sanitize_text_field($order->get_status()),
-            'payment_status' => $order->is_paid() ? 'paid' : 'pending',
-            'currency' => sanitize_text_field($order->get_currency()),
-            'montant_ht' => (float) $order->get_subtotal(),
-            'tva' => (float) $order->get_total_tax(),
-            'montant_ttc' => (float) $order->get_total(),
-            'client' => $client_payload,
-            'lignes' => $lines,
-            'last_sync_at' => current_time('mysql'),
+            'external_id' => (string) $order->get_id(),
+            'status' => sanitize_text_field($order->get_status()),
+            'ordered_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : current_time('c'),
+            'notes' => sanitize_textarea_field((string) $order->get_customer_note()),
+            'customer' => [
+                'id' => $remote_customer_id > 0 ? $remote_customer_id : ($wc_customer_id > 0 ? $wc_customer_id : null),
+                'email' => sanitize_email($order->get_billing_email()),
+                'phone' => sanitize_text_field($order->get_billing_phone()),
+                'first_name' => sanitize_text_field($order->get_billing_first_name()),
+                'last_name' => sanitize_text_field($order->get_billing_last_name()),
+            ],
+            'billing' => [
+                'company' => sanitize_text_field($order->get_billing_company()),
+                'first_name' => sanitize_text_field($order->get_billing_first_name()),
+                'last_name' => sanitize_text_field($order->get_billing_last_name()),
+                'phone' => sanitize_text_field($order->get_billing_phone()),
+                'address_1' => sanitize_text_field($order->get_billing_address_1()),
+                'address_2' => sanitize_text_field($order->get_billing_address_2()),
+                'city' => sanitize_text_field($order->get_billing_city()),
+            ],
+            'shipping' => [
+                'company' => sanitize_text_field($order->get_shipping_company()),
+                'first_name' => sanitize_text_field($order->get_shipping_first_name()),
+                'last_name' => sanitize_text_field($order->get_shipping_last_name()),
+                'address_1' => sanitize_text_field($order->get_shipping_address_1()),
+                'address_2' => sanitize_text_field($order->get_shipping_address_2()),
+                'city' => sanitize_text_field($order->get_shipping_city()),
+            ],
+            'line_items' => $lines,
         ];
+    }
+
+    /**
+     * Applique un article catalogue Manajeni a un produit WooCommerce.
+     *
+     * @param WC_Product $product Produit WooCommerce.
+     * @param array      $item Article catalogue.
+     * @param string     $reference Reference SKU.
+     * @return void
+     */
+    private function apply_catalogue_item_to_product($product, $item, $reference) {
+        $name = '';
+        foreach (['name', 'nom', 'label', 'title'] as $field) {
+            if (!empty($item[$field])) {
+                $name = sanitize_text_field((string) $item[$field]);
+                break;
+            }
+        }
+
+        if ('' === $name) {
+            $name = $reference;
+        }
+
+        $description = '';
+        foreach (['description', 'details', 'content'] as $field) {
+            if (!empty($item[$field])) {
+                $description = wp_kses_post((string) $item[$field]);
+                break;
+            }
+        }
+
+        $price = null;
+        foreach (['price', 'prix', 'unit_price'] as $field) {
+            if (isset($item[$field]) && '' !== (string) $item[$field]) {
+                $price = wc_format_decimal($item[$field]);
+                break;
+            }
+        }
+
+        $stock_quantity = null;
+        foreach (['stock_quantity', 'stock', 'quantity'] as $field) {
+            if (isset($item[$field]) && '' !== (string) $item[$field]) {
+                $stock_quantity = (int) $item[$field];
+                break;
+            }
+        }
+
+        $status = isset($item['status']) ? sanitize_key((string) $item['status']) : 'active';
+        $category = !empty($item['category']) ? sanitize_text_field((string) $item['category']) : '';
+
+        $lock_id = $product->get_id() ?: $reference;
+        $this->mapper->set_lock('product', $lock_id);
+        try {
+            $product->set_name($name);
+            $product->set_sku($reference);
+            $product->set_description($description);
+            $product->set_status('active' === $status ? 'publish' : 'draft');
+
+            if (null !== $price && '' !== $price) {
+                $product->set_regular_price($price);
+                $product->set_price($price);
+            }
+
+            if (null !== $stock_quantity) {
+                $product->set_manage_stock(true);
+                $product->set_stock_quantity($stock_quantity);
+                $product->set_stock_status($stock_quantity > 0 ? 'instock' : 'outofstock');
+            }
+
+            $product_id = $product->save();
+            if ($product_id && '' !== $category) {
+                $term = term_exists($category, 'product_cat');
+                if (!$term) {
+                    $term = wp_insert_term($category, 'product_cat');
+                }
+
+                if (!is_wp_error($term)) {
+                    $term_id = is_array($term) && isset($term['term_id']) ? (int) $term['term_id'] : (int) $term;
+                    if ($term_id > 0) {
+                        wp_set_object_terms($product_id, [$term_id], 'product_cat', false);
+                    }
+                }
+            }
+        } finally {
+            $this->mapper->release_lock('product', $lock_id);
+        }
+    }
+
+    /**
+     * Importe l'image principale WooCommerce depuis image_url si disponible.
+     *
+     * @param int   $product_id Product ID.
+     * @param array $item Article catalogue.
+     * @return void
+     */
+    private function maybe_import_product_image($product_id, $item) {
+        if (empty($item['image_url'])) {
+            return;
+        }
+
+        $image_url = esc_url_raw((string) $item['image_url']);
+        if ('' === $image_url) {
+            return;
+        }
+
+        $current_image_url = (string) get_post_meta($product_id, '_manajeni_image_url', true);
+        if ($current_image_url === $image_url && get_post_thumbnail_id($product_id)) {
+            return;
+        }
+
+        if (!function_exists('media_sideload_image')) {
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+        }
+
+        $attachment_id = media_sideload_image($image_url, $product_id, null, 'id');
+        if (is_wp_error($attachment_id)) {
+            throw new Exception($attachment_id->get_error_message());
+        }
+
+        set_post_thumbnail($product_id, (int) $attachment_id);
+        update_post_meta($product_id, '_manajeni_image_url', $image_url);
+    }
+
+    /**
+     * Extrait une reference stable depuis un article catalogue.
+     *
+     * @param array $item Article catalogue.
+     * @return string
+     */
+    private function extract_catalogue_reference($item) {
+        foreach (['reference', 'sku'] as $field) {
+            if (!empty($item[$field])) {
+                return sanitize_text_field((string) $item[$field]);
+            }
+        }
+
+        return '';
     }
 
     /**
