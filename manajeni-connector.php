@@ -408,6 +408,26 @@ add_filter('admin_body_class', function($classes) {
     return $classes;
 });
 
+add_action('wp_ajax_manajeni_reconcile_catalogue', function() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error([
+            'message' => __('Acces non autorise.', 'manajeni-connector'),
+        ], 403);
+    }
+
+    check_ajax_referer('manajeni_reconcile_catalogue', 'nonce');
+
+    $batch = isset($_POST['batch']) ? absint($_POST['batch']) : 20;
+    $offset = isset($_POST['offset']) ? absint($_POST['offset']) : 0;
+    $result = manajeni_connector_get_woocommerce_sync()->reconcile_catalogue_bidirectional($batch, $offset);
+
+    if (!empty($result['success'])) {
+        wp_send_json_success($result);
+    }
+
+    wp_send_json_error($result, 500);
+});
+
 add_action('shutdown', function() {
     while (ob_get_level()) {
         ob_end_flush();

@@ -19,9 +19,15 @@ class Manajeni_Webhook_Controller {
      */
     private $logger;
 
-    public function __construct($mapper = null, $logger = null) {
+    /**
+     * @var Manajeni_WooCommerce_Sync|null
+     */
+    private $sync_service;
+
+    public function __construct($mapper = null, $logger = null, $sync_service = null) {
         $this->mapper = $mapper ?: new Manajeni_Sync_Mapper();
         $this->logger = $logger ?: new Manajeni_Sync_Logger();
+        $this->sync_service = $sync_service;
     }
 
     /**
@@ -72,53 +78,17 @@ class Manajeni_Webhook_Controller {
             return rest_ensure_response(['success' => false, 'message' => 'missing_reference']);
         }
 
-        $product_id = wc_get_product_id_by_sku($sku);
-        if (!$product_id) {
-            $this->logger->log('warning', 'webhook_catalogue_missing_product', 'Aucun produit WooCommerce trouve pour cette reference.', ['sku' => $sku]);
-            return new WP_Error('manajeni_product_not_found', __('Produit WooCommerce introuvable pour ce SKU.', 'manajeni-connector'), ['status' => 404]);
+        $sync_service = $this->sync_service ?: manajeni_connector_get_woocommerce_sync();
+        $result = $sync_service->create_or_update_wc_product_from_manajeni($payload, [
+            'allow_create' => true,
+            'log_action' => true,
+        ]);
+
+        if (empty($result['success'])) {
+            return new WP_Error('manajeni_product_sync_failed', __('Echec synchronisation produit WooCommerce.', 'manajeni-connector'), ['status' => 500, 'result' => $result]);
         }
 
-        $product = wc_get_product($product_id);
-        if (!$product) {
-            return new WP_Error('manajeni_product_invalid', __('Produit WooCommerce invalide.', 'manajeni-connector'), ['status' => 404]);
-        }
-
-        $this->mapper->set_lock('product', $product_id);
-        try {
-            if (!empty($payload['name'])) {
-                $product->set_name(sanitize_text_field($payload['name']));
-            }
-
-            if (isset($payload['price'])) {
-                $price = wc_format_decimal($payload['price']);
-                $product->set_regular_price($price);
-                $product->set_price($price);
-            }
-
-            if (isset($payload['stock'])) {
-                $product->set_manage_stock(true);
-                $product->set_stock_quantity((int) $payload['stock']);
-                $product->set_stock_status(((int) $payload['stock']) > 0 ? 'instock' : 'outofstock');
-            }
-
-            if (isset($payload['status'])) {
-                $product->set_status('active' === $payload['status'] ? 'publish' : 'draft');
-            }
-
-            $product->save();
-
-            $this->mapper->save_product_mapping([
-                'wc_product_id' => $product_id,
-                'manajeni_product_id' => isset($payload['id']) ? $payload['id'] : 0,
-                'sku' => $sku,
-            ]);
-
-            $this->logger->log('info', 'webhook_catalogue_updated', 'Produit WooCommerce mis a jour depuis Manajeni.', ['product_id' => $product_id, 'sku' => $sku]);
-        } finally {
-            $this->mapper->release_lock('product', $product_id);
-        }
-
-        return rest_ensure_response(['success' => true]);
+        return rest_ensure_response(['success' => true, 'product_id' => isset($result['product_id']) ? (int) $result['product_id'] : 0]);
     }
 
     /**

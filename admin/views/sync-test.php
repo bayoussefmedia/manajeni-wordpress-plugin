@@ -17,16 +17,8 @@ $sync = manajeni_connector_get_woocommerce_sync();
 $db = new Manajeni_DB();
 $woocommerce_active = manajeni_connector_is_woocommerce_active();
 $api_connected = $db->has_api_key();
-$import_result = null;
-
-if (
-    $woocommerce_active
-    && $api_connected
-    && isset($_POST['import_manajeni_catalogue'])
-    && check_admin_referer('manajeni_sync_test_actions', 'mj_sync_nonce')
-) {
-    $import_result = $sync->import_catalogue_from_manajeni();
-}
+$reconcile_nonce = wp_create_nonce('manajeni_reconcile_catalogue');
+$ajax_url = admin_url('admin-ajax.php');
 
 $logs = $logger->get_logs(120);
 $stats = $logger->get_stats();
@@ -55,27 +47,6 @@ $retry_count = $sync->get_retry_queue_count();
     <?php if (!$api_connected) : ?>
         <div class="notice mj-notice notice-warning">
             <p><strong><?php echo esc_html__('Aucune clé API connectée. Les hooks sortants vers Manajeni sont désactivés.', 'manajeni-connector'); ?></strong></p>
-        </div>
-    <?php endif; ?>
-
-    <?php if (is_array($import_result)) : ?>
-        <div class="notice mj-notice <?php echo $import_result['errors'] > 0 ? 'notice-warning' : 'notice-success'; ?>">
-            <p>
-                <strong><?php echo esc_html__('Import Catalogue Manajeni → WooCommerce terminé.', 'manajeni-connector'); ?></strong>
-                <?php
-                echo ' ';
-                echo esc_html(sprintf(
-                    'created: %d | updated: %d | skipped: %d | errors: %d',
-                    (int) $import_result['created'],
-                    (int) $import_result['updated'],
-                    (int) $import_result['skipped'],
-                    (int) $import_result['errors']
-                ));
-                ?>
-            </p>
-            <?php if (!empty($import_result['messages'])) : ?>
-                <p style="margin-top:8px; color:var(--mj-slate-500);"><?php echo esc_html(implode(' | ', array_slice($import_result['messages'], 0, 5))); ?></p>
-            <?php endif; ?>
         </div>
     <?php endif; ?>
 
@@ -142,28 +113,31 @@ $retry_count = $sync->get_retry_queue_count();
         </div>
     </div>
 
-    <div class="mj-table-wrapper" style="margin-top:24px; padding:24px;">
+    <div class="mj-table-wrapper" style="margin-top:24px; padding:24px;" id="mj-reconcile-panel" data-ajax-url="<?php echo esc_url($ajax_url); ?>" data-nonce="<?php echo esc_attr($reconcile_nonce); ?>">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;">
             <div>
-                <h3 style="margin:0;">Import Catalogue</h3>
-                <p style="margin:8px 0 0; color:var(--mj-slate-500);">Créer ou mettre à jour les produits WooCommerce depuis Manajeni, sans jamais supprimer les produits existants.</p>
+                <h3 style="margin:0;">Réconciliation Catalogue</h3>
+                <p style="margin:8px 0 0; color:var(--mj-slate-500);">Comparer Manajeni et WooCommerce par SKU, créer les éléments manquants dans les deux sens, lier les doublons, sans suppression automatique.</p>
             </div>
-            <form method="post">
-                <?php wp_nonce_field('manajeni_sync_test_actions', 'mj_sync_nonce'); ?>
-                <button type="submit" name="import_manajeni_catalogue" class="mj-btn-primary" <?php disabled(!$woocommerce_active || !$api_connected); ?>>
-                    Importer Catalogue Manajeni vers WooCommerce
-                </button>
-            </form>
+            <button type="button" id="mj-reconcile-button" class="mj-btn-primary" <?php disabled(!$woocommerce_active || !$api_connected); ?>>
+                Vérifier et synchroniser Catalogue Manajeni ⇄ WooCommerce
+            </button>
         </div>
 
-        <?php if (is_array($import_result)) : ?>
-            <div style="margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
-                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['created']); ?></div><div class="mj-stat-label">created</div></div></div>
-                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['updated']); ?></div><div class="mj-stat-label">updated</div></div></div>
-                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['skipped']); ?></div><div class="mj-stat-label">skipped</div></div></div>
-                <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value"><?php echo esc_html((int) $import_result['errors']); ?></div><div class="mj-stat-label">errors</div></div></div>
-            </div>
-        <?php endif; ?>
+        <div id="mj-reconcile-status" style="margin-top:16px; color:var(--mj-slate-500); font-size:13px;">
+            <?php echo esc_html__('Prêt à lancer une réconciliation par lots de 20.', 'manajeni-connector'); ?>
+        </div>
+
+        <div style="margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-processed">0</div><div class="mj-stat-label">produits traités</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-created-manajeni">0</div><div class="mj-stat-label">créés dans Manajeni</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-created-wc">0</div><div class="mj-stat-label">créés dans WooCommerce</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-updated-total">0</div><div class="mj-stat-label">mis à jour</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-linked">0</div><div class="mj-stat-label">liés</div></div></div>
+            <div class="mj-stat-card"><div class="mj-stat-info"><div class="mj-stat-value" id="mj-reconcile-errors-count">0</div><div class="mj-stat-label">erreurs</div></div></div>
+        </div>
+
+        <div id="mj-reconcile-errors" style="display:none; margin-top:16px; padding:14px 16px; background:var(--mj-error-soft); color:var(--mj-error); border-radius:12px;"></div>
     </div>
 
     <div class="mj-table-wrapper" style="margin-top:40px;">
@@ -214,3 +188,123 @@ $retry_count = $sync->get_retry_queue_count();
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var panel = document.getElementById('mj-reconcile-panel');
+    var button = document.getElementById('mj-reconcile-button');
+
+    if (!panel || !button) {
+        return;
+    }
+
+    var statusNode = document.getElementById('mj-reconcile-status');
+    var errorsNode = document.getElementById('mj-reconcile-errors');
+    var metrics = {
+        processed: document.getElementById('mj-reconcile-processed'),
+        createdManajeni: document.getElementById('mj-reconcile-created-manajeni'),
+        createdWoo: document.getElementById('mj-reconcile-created-wc'),
+        updatedTotal: document.getElementById('mj-reconcile-updated-total'),
+        linked: document.getElementById('mj-reconcile-linked'),
+        errorsCount: document.getElementById('mj-reconcile-errors-count')
+    };
+
+    var totals = {
+        processed: 0,
+        created_in_manajeni: 0,
+        created_in_woocommerce: 0,
+        updated_in_manajeni: 0,
+        updated_in_woocommerce: 0,
+        linked: 0,
+        errors: []
+    };
+
+    function render() {
+        metrics.processed.textContent = String(totals.processed);
+        metrics.createdManajeni.textContent = String(totals.created_in_manajeni);
+        metrics.createdWoo.textContent = String(totals.created_in_woocommerce);
+        metrics.updatedTotal.textContent = String(totals.updated_in_manajeni + totals.updated_in_woocommerce);
+        metrics.linked.textContent = String(totals.linked);
+        metrics.errorsCount.textContent = String(totals.errors.length);
+
+        if (totals.errors.length) {
+            errorsNode.style.display = 'block';
+            errorsNode.textContent = totals.errors.slice(0, 10).join(' | ');
+        } else {
+            errorsNode.style.display = 'none';
+            errorsNode.textContent = '';
+        }
+    }
+
+    function mergeBatch(data) {
+        totals.processed += Number(data.processed || 0);
+        totals.created_in_manajeni += Number(data.created_in_manajeni || 0);
+        totals.created_in_woocommerce += Number(data.created_in_woocommerce || 0);
+        totals.updated_in_manajeni += Number(data.updated_in_manajeni || 0);
+        totals.updated_in_woocommerce += Number(data.updated_in_woocommerce || 0);
+        totals.linked += Number(data.linked || 0);
+        if (Array.isArray(data.errors) && data.errors.length) {
+            totals.errors = totals.errors.concat(data.errors);
+        }
+        render();
+    }
+
+    function setStatus(message) {
+        statusNode.textContent = message;
+    }
+
+    function runBatch(offset) {
+        var formData = new window.FormData();
+        formData.append('action', 'manajeni_reconcile_catalogue');
+        formData.append('nonce', panel.dataset.nonce);
+        formData.append('batch', '20');
+        formData.append('offset', String(offset));
+
+        return window.fetch(panel.dataset.ajaxUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: formData
+        }).then(function (response) {
+            return response.json();
+        }).then(function (payload) {
+            var data = payload && payload.data ? payload.data : {};
+            mergeBatch(data);
+
+            if (!payload.success && Array.isArray(data.errors) && data.errors.length) {
+                setStatus('Réconciliation terminée avec erreurs.');
+                return;
+            }
+
+            if (data.has_more) {
+                setStatus('Traitement en cours... ' + totals.processed + ' produits traités.');
+                return runBatch(Number(data.offset || 0));
+            }
+
+            setStatus('Réconciliation terminée. ' + totals.processed + ' produits traités.');
+        }).catch(function (error) {
+            totals.errors.push(error && error.message ? error.message : 'Erreur AJAX');
+            render();
+            setStatus('Réconciliation interrompue par une erreur AJAX.');
+        });
+    }
+
+    button.addEventListener('click', function () {
+        button.disabled = true;
+        totals = {
+            processed: 0,
+            created_in_manajeni: 0,
+            created_in_woocommerce: 0,
+            updated_in_manajeni: 0,
+            updated_in_woocommerce: 0,
+            linked: 0,
+            errors: []
+        };
+        render();
+        setStatus('Démarrage de la réconciliation...');
+
+        runBatch(0).finally(function () {
+            button.disabled = false;
+        });
+    });
+});
+</script>

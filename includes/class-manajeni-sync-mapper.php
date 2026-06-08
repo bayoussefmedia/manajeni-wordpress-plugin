@@ -157,6 +157,18 @@ class Manajeni_Sync_Mapper {
     }
 
     /**
+     * Alias public pour harmoniser l'API du mapper.
+     *
+     * @param string $resource Resource.
+     * @param string $id Identifiant.
+     * @param int    $ttl Duree.
+     * @return void
+     */
+    public function lock($resource, $id, $ttl = 60) {
+        $this->set_lock($resource, $id, $ttl);
+    }
+
+    /**
      * Supprime un lock.
      *
      * @param string $resource Resource.
@@ -165,6 +177,17 @@ class Manajeni_Sync_Mapper {
      */
     public function release_lock($resource, $id) {
         delete_transient($this->get_lock_key($resource, $id));
+    }
+
+    /**
+     * Alias public pour harmoniser l'API du mapper.
+     *
+     * @param string $resource Resource.
+     * @param string $id Identifiant.
+     * @return void
+     */
+    public function unlock($resource, $id) {
+        $this->release_lock($resource, $id);
     }
 
     /**
