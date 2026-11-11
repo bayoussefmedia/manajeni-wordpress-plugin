@@ -439,6 +439,7 @@ add_action('plugins_loaded', function() {
 }, 20);
 
 // Shortcodes publics : aucun secret API ni CV n'est exposé à WordPress.
+require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-recruitment-detail.php';
 require_once MANAJENI_CONNECTOR_PATH . 'includes/class-manajeni-recruitment-shortcode.php';
 add_action('init', ['Manajeni_Recruitment_Shortcode', 'register']);
 
