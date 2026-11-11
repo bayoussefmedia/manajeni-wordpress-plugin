@@ -13,6 +13,33 @@ final class Manajeni_Recruitment_Shortcode
     {
         add_shortcode('manajeni_jobs', [self::class, 'render']);
         add_shortcode('manajeni_emplois', [self::class, 'render']);
+        add_shortcode('manajeni_job_detail', [self::class, 'renderDetail']);
+    }
+
+    public static function renderDetail($atts): string
+    {
+        $attributes = shortcode_atts(['company_id' => ''], (array) $atts, 'manajeni_job_detail');
+        $companyId = absint($attributes['company_id']);
+        if (!$companyId) {
+            $companyId = absint(get_option('manajeni_recruitment_company_id', 0));
+        }
+        if (!$companyId) {
+            return current_user_can('manage_options')
+                ? '<p>'.esc_html__('Manajeni : précisez company_id.', 'manajeni-connector').'</p>' : '';
+        }
+        $slug = isset($_GET['mj_offer']) && is_scalar($_GET['mj_offer'])
+            ? sanitize_text_field(wp_unslash($_GET['mj_offer'])) : '';
+        if ($slug === '') {
+            return '<p>'.esc_html__('Sélectionnez une offre dans la liste des emplois.', 'manajeni-connector').'</p>';
+        }
+        $sourcePage = isset($_GET['mj_job_page']) && is_scalar($_GET['mj_job_page'])
+            ? max(1, min(10000, absint(wp_unslash($_GET['mj_job_page'])))) : 1;
+        $sourceLimit = isset($_GET['mj_job_limit']) && is_scalar($_GET['mj_job_limit'])
+            ? max(1, min(24, absint(wp_unslash($_GET['mj_job_limit'])))) : 9;
+        $search = isset($_GET['mj_job_q']) && is_scalar($_GET['mj_job_q'])
+            ? mb_substr(sanitize_text_field(wp_unslash($_GET['mj_job_q'])), 0, 120) : '';
+
+        return Manajeni_Recruitment_Detail::render($companyId, $slug, $sourcePage, $sourceLimit, $search);
     }
 
     public static function render($atts): string
@@ -51,6 +78,14 @@ final class Manajeni_Recruitment_Shortcode
         $payload = json_decode(wp_remote_retrieve_body($response), true);
         if (!is_array($payload) || !isset($payload['data']) || !is_array($payload['data'])) {
             return '<p class="mj-jobs-error">'.esc_html__('Réponse emplois invalide.', 'manajeni-connector').'</p>';
+        }
+
+        // Detail view on the same WordPress page; no new page or rewrite rules needed.
+        if (isset($_GET['mj_offer']) && is_scalar($_GET['mj_offer'])) {
+            $slug = sanitize_text_field(wp_unslash($_GET['mj_offer']));
+            if ($slug !== '') {
+                return Manajeni_Recruitment_Detail::render($companyId, $slug, $page, $limit, $search);
+            }
         }
 
         $offers = $payload['data'];
@@ -101,6 +136,14 @@ final class Manajeni_Recruitment_Shortcode
                         if (!is_array($offer) || empty($offer['url']) || empty($offer['title'])) { continue; }
                         $offerUrl = esc_url_raw((string) $offer['url']);
                         if (wp_parse_url($offerUrl, PHP_URL_HOST) !== 'manajeni.com' || wp_parse_url($offerUrl, PHP_URL_SCHEME) !== 'https') { continue; }
+                        $slug = (string) ($offer['slug'] ?? '');
+                        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/D', $slug)) { continue; }
+                        $detailUrl = add_query_arg([
+                            'mj_offer' => $slug,
+                            'mj_job_page' => $page,
+                            'mj_job_limit' => $limit,
+                            'mj_job_q' => $search,
+                        ], get_permalink());
                         $description = trim((string) ($offer['description'] ?? ''));
                         ?>
                         <article class="mj-job">
@@ -116,7 +159,7 @@ final class Manajeni_Recruitment_Shortcode
                                     $offer['type'] ?? '', $offer['contract_type'] ?? '', $offer['work_mode'] ?? '',
                                 ]))); ?></p>
                                 <?php if ($description !== '') : ?><p class="mj-job-desc"><?php echo esc_html(wp_trim_words($description, 32, '…')); ?></p><?php endif; ?>
-                                <a class="mj-jobs-apply" href="<?php echo esc_url($offerUrl); ?>" rel="noopener"><?php esc_html_e('Voir l’offre et postuler', 'manajeni-connector'); ?></a>
+                                <a class="mj-jobs-apply" href="<?php echo esc_url($detailUrl); ?>"><?php esc_html_e('Voir l’offre et postuler', 'manajeni-connector'); ?></a>
                             </div>
                         </article>
                     <?php endforeach; ?>
