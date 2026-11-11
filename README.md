@@ -144,3 +144,15 @@ Remplacer \`8\` par l'identifiant **réel** de l'entreprise connectée à Manaje
 **Parcours candidat actuellement fourni :** le bouton « Voir l'offre et postuler » ouvre la fiche officielle sécurisée sur Manajeni. Le formulaire de candidature, le dépôt du CV, les invitations aux questionnaires et les entretiens IA restent gérés par Manajeni et son contrôle des sessions. **Cette première version ne réalise pas encore la candidature ou l'entretien IA entièrement dans WordPress.** Ne pas utiliser d'iframe tiers pour les entretiens : sessions, PIN et protection de données nécessitent un parcours dédié.
 
 La fonctionnalité exige que l'entreprise soit active et que l'application Recrutement soit accessible dans Manajeni. Le plugin ne publie rien, ne change aucune offre et n'enregistre aucun CV sur WordPress. Il faut déployer le backend Laravel avant d'activer le shortcode sur WordPress. Aucun déploiement de production n'est effectué par ces commits.
+
+## Fiche d'offre locale WordPress (phase 1, sans modification Laravel)
+
+Le shortcode existant reste inchangé :
+
+    [manajeni_jobs company_id="8" limit="9"]
+
+Les boutons « Voir l’offre et postuler » ouvrent désormais la fiche détaillée **sur la même page WordPress** avec le paramètre `mj_offer` et affichent les champs publics du flux Manajeni (description, exigences, image, localisation, contrat, rémunération si publique). Aucun nouveau permalien ni configuration de réécriture n'est requis. Le shortcode alternatif `[manajeni_job_detail company_id="8"]` permet aussi de placer une fiche sur une page distincte avec le même paramètre `mj_offer`.
+
+**Limite de cette phase :** le bouton final « Postuler en toute sécurité » continue vers le formulaire officiel Manajeni. Le flux public existant est en lecture seule : il ne permet pas d'envoyer les CV, les réponses aux questionnaires, ni les échanges d'entretien IA. Les sessions et invitations sont actuellement gérées par Laravel. Ne jamais contourner ces contrôles par iframe, partage de cookie, stockage de PIN ou token en WordPress. Une expérience candidat entièrement locale exige des endpoints candidat sécurisés déjà disponibles ou une extension explicite de l'API Laravel, qui est hors périmètre de cette PR.
+
+Tests à effectuer avant fusion : `php -l manajeni-connector.php`, `php -l includes/class-manajeni-recruitment-shortcode.php`, `php -l includes/class-manajeni-recruitment-detail.php`; vérifier sur WordPress liste → détail → retour → candidature externe, lien invalide, offre expirée, société sans accès, recherche et pagination. Aucune exécution de ces tests n'est revendiquée par la PR.
