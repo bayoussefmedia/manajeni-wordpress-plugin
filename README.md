@@ -129,3 +129,18 @@ L'activation fonctionnelle doit ensuite etre verifiee dans WordPress avec un env
 - conserver les controles `ABSPATH` dans les fichiers PHP charges directement
 - limiter l'acces aux pages admin avec `manage_options`
 - preferer les fonctions WordPress d'echappement et de redirection securisee pour les evolutions futures
+
+
+## Offres d'emploi WordPress (nouveau)
+
+Après déploiement **des deux dépôts**, insérer dans une page WordPress :
+
+\`\`\`text
+[manajeni_jobs company_id="8" limit="9" show_search="yes" title="Rejoignez notre équipe"]
+\`\`\`
+
+Remplacer \`8\` par l'identifiant **réel** de l'entreprise connectée à Manajeni (pas celui d'une autre entreprise). Alias : \`[manajeni_emplois ...]\`. Le shortcode affiche uniquement les offres ouvertes et publiées de cette entreprise, avec recherche, images et pagination. Aucune clé API n'est rendue côté visiteur. Les offres se chargent depuis le flux public HTTPS \`/widgets/recruitment/companies/{company_id}/offers\`.
+
+**Parcours candidat actuellement fourni :** le bouton « Voir l'offre et postuler » ouvre la fiche officielle sécurisée sur Manajeni. Le formulaire de candidature, le dépôt du CV, les invitations aux questionnaires et les entretiens IA restent gérés par Manajeni et son contrôle des sessions. **Cette première version ne réalise pas encore la candidature ou l'entretien IA entièrement dans WordPress.** Ne pas utiliser d'iframe tiers pour les entretiens : sessions, PIN et protection de données nécessitent un parcours dédié.
+
+La fonctionnalité exige que l'entreprise soit active et que l'application Recrutement soit accessible dans Manajeni. Le plugin ne publie rien, ne change aucune offre et n'enregistre aucun CV sur WordPress. Il faut déployer le backend Laravel avant d'activer le shortcode sur WordPress. Aucun déploiement de production n'est effectué par ces commits.
